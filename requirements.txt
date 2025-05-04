@@ -1,0 +1,5 @@
+gkeepapi
+keyring
+gpsoauth
+python-dotenv
+PyYAML 

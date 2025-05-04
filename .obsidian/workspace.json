@@ -1,0 +1,221 @@
+{
+  "main": {
+    "id": "45c8f9ecbef37d38",
+    "type": "split",
+    "children": [
+      {
+        "id": "6b408ebced4ec1bc",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "af6213d3eb8986fc",
+            "type": "leaf",
+            "state": {
+              "type": "canvas",
+              "state": {
+                "file": "Untitled.canvas",
+                "viewState": {
+                  "x": 0,
+                  "y": 0,
+                  "zoom": 0
+                }
+              },
+              "icon": "lucide-layout-dashboard",
+              "title": "Untitled"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "793d7c3cdc5a211c",
+    "type": "split",
+    "children": [
+      {
+        "id": "b0f7ec62942050a1",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "31464aaf35bedf13",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Files"
+            }
+          },
+          {
+            "id": "539c58d10946f594",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "tag:#dorbold",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Search"
+            }
+          },
+          {
+            "id": "fbe3807895627db9",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "Bookmarks"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "right": {
+    "id": "340169342764b4c9",
+    "type": "split",
+    "children": [
+      {
+        "id": "d12d00f1b04acf85",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "a8eb84b8f076fb6b",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Backlinks"
+            }
+          },
+          {
+            "id": "1a4d37de696eb086",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Outgoing links"
+            }
+          },
+          {
+            "id": "7faf50767ef8838c",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Tags"
+            }
+          },
+          {
+            "id": "0fa854751d4865a6",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "Outline"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false
+    }
+  },
+  "active": "af6213d3eb8986fc",
+  "lastOpenFiles": [
+    "gkeep_docs.md",
+    "KeepVault/Trains_CEP.md",
+    "KeepVault/Faire_des_stats_sur_le_ratio_de_chansons_qui_parlent_d'amour.md",
+    "Untitled.canvas",
+    "KeepVault/T_cheat_sheet.md",
+    "KeepVault/SOC.md",
+    "KeepVault/Velo_3.md",
+    "KeepVault/Untitled_19060723664.a3ebbc262270f859.md",
+    "KeepVault/Cecil_Taylor.md",
+    "KeepVault/Untitled_1906f24e090.a58ec62466eb8713.md",
+    "KeepVault/Untitled_1907e5ee838.81463f22f1d304cf.md",
+    "KeepVault/Untitled_1907e6f73fc.a4a91d83c1d44ee3.md",
+    "KeepVault/Untitled_1907e756944.b385126aea874c97.md",
+    "KeepVault/Untitled_1907e7bf491.9cf72c18f3632962.md",
+    "KeepVault/Dialecte_Champagne-Ardennais.md",
+    "KeepVault/Untitled_1720181593772.742010421.md",
+    "KeepVault/Untitled_19084fdb001.ad61695673a08061.md",
+    "KeepVault/Untitled_19086fa235c.8af7ce7fde6fe90a.md",
+    "KeepVault/Untitled_190878d7f11.984703ef35768ea7.md",
+    "KeepVault/Untitled_190896cb124.9d1f7aa1fbebe469.md",
+    "KeepVault/Untitled_19092643002.9e8b2dbcec8246a4.md",
+    "KeepVault/Untitled_190984c6618.a8a55e823e8bb7de.md",
+    "KeepVault/Untitled_19098be7f69.96e40857f8801886.md",
+    "KeepVault/Untitled_1909ba84cb9.b98b1334cd7c9d4f.md",
+    "KeepVault/Untitled_1909d889e1e.8b3050ea9bb52153.md",
+    "KeepVault/Untitled_190a60842cf.bbc24f2e14ebfa4d.md",
+    "KeepVault/Untitled_1720778081298.570430048.md",
+    "KeepVault/Trashed",
+    "KeepVault/Archived",
+    "keep_notes.json",
+    "keep_state.json",
+    "fix_tags.py",
+    "reset_workspace.ps1",
+    "KeepVault/Attachments/1958b5dca05.bf676d9ea11e3ade.jpg",
+    "KeepVault/Attachments/190609664ef.945ffd091aa76ac2.jpg",
+    "KeepVault/Attachments/1725132840736.497282652.png",
+    "KeepVault/Attachments/1741032277171.1676252540.jpg",
+    "KeepVault/Attachments/1741032267504.924664663.jpg",
+    "KeepVault/Attachments/1741032244912.1243719796.jpg",
+    "KeepVault/Attachments/191b98123f4.979cd5664f85b446.jpg",
+    "KeepVault/Attachments/1725739003807.865988181.png",
+    "KeepVault/Attachments/1725738825792.542451273.png",
+    "KeepVault/Attachments/1725738730105.99297017.png",
+    "KeepVault/Attachments",
+    "KeepVault",
+    "test_keep_note.py",
+    "test_gkeep_text.py"
+  ]
+}

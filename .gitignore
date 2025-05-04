@@ -1,0 +1,15 @@
+# Environment variables
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+
+# State cache file from script
+.*_keep_state.json 
+
+keep_state.json
+keep_notes.json
+/KeepVault
+debug_sync.log
+logs_console.txt
