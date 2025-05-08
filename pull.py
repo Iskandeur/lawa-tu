@@ -385,18 +385,27 @@ def make_serializable(obj):
         return obj
 
 def escape_hashtags(text):
-    """Escape hashtags in text to prevent Obsidian from interpreting them as tags."""
+    """Escape hashtags that might be interpreted as tags/headers by Obsidian."""
     if not text:
         return text
-    return re.sub(r'(^|\s)#(\w)', r'\1\#\2', text)
+    # Escape # if:
+    # - Not already preceded by a backslash (negative lookbehind (?<!\\))
+    # - At the start of the line (^) or preceded by whitespace (\\s)
+    # - Followed by a non-whitespace, non-# character ([^\s#])
+    # Replace with the preceding char/whitespace + \\# + the following char
+    # Fix: Use proper regex replacement syntax for captured groups
+    return re.sub(r'(?<!\\)(^|\\s)#([^\s#])', r'\g<1>\\#\g<2>', text)
 
 def sanitize_filename(name, note_id):
     """Sanitizes a string to be a valid filename, using note_id as fallback."""
     if not name: # Use note ID if title is empty
         name = f"Untitled_{note_id}"
 
-    # Remove invalid characters
-    sanitized = re.sub(r'[<>:"/\\|?*]', '', name) # Use raw string for backslash
+    # Replace / with _
+    sanitized = name.replace('/', '_')
+
+    # Remove invalid characters (note: / is already replaced)
+    sanitized = re.sub(r'[<>:"\\\|?*]', '', sanitized) # Use raw string for backslash
     sanitized = re.sub(r'[\x00-\x1f\x7f]', '', sanitized) # Remove control characters
 
     # Keep spaces, but replace multiple spaces/tabs with a single space
@@ -457,12 +466,32 @@ def is_note_empty(note_data):
 def convert_note_to_markdown(note, note_data):
     """Converts a GKeep note (via note_data) into a Markdown string with frontmatter."""
     # --- Prepare Markdown Body Content ---
-    # Use text from note object directly, or could use note_data.get('text', '')
-    note_text_stripped = note.text.strip() if note.text else ""
-    content_parts = [note_text_stripped] if note_text_stripped else []
+    processed_note_text = ""
+    if note.text: # Check if note.text is not None and not empty
+        # 1. Normalize line endings (as in push.py remote prep)
+        text_normalized = note.text.replace('\r\n', '\n').replace('\r', '\n')
+        
+        # 2. Split into lines
+        lines = text_normalized.split('\n')
+        
+        # 3. Filter blank lines (lines that are empty or only whitespace) (as in push.py remote prep)
+        #    A line is blank if line.strip() == ""
+        non_blank_lines = [line for line in lines if line.strip() != ""]
+        
+        # 4. Strip trailing whitespace from each non-blank line (as in push.py remote prep)
+        stripped_trailing_lines = [line.rstrip() for line in non_blank_lines]
+        
+        # 5. Join back
+        cleaned_text_block = '\n'.join(stripped_trailing_lines)
+        
+        # 6. Escape hashtags (this is specific to pull.py's markdown output)
+        #    Only apply if cleaned_text_block is not empty, otherwise escape_hashtags might receive empty string.
+        if cleaned_text_block:
+            processed_note_text = escape_hashtags(cleaned_text_block)
+        # If cleaned_text_block is empty after processing, processed_note_text remains ""
 
-    if content_parts and content_parts[0]:
-        content_parts[0] = escape_hashtags(content_parts[0])
+    # Use processed_note_text for content_parts
+    content_parts = [processed_note_text] if processed_note_text else []
 
     # --- Attachments Section (using note_data) ---
     # note_data['attachments'] is a list of dicts like {'filename': 'name.ext', ...}
@@ -488,12 +517,18 @@ def convert_note_to_markdown(note, note_data):
 
     # --- Prepare YAML Frontmatter ---
     yaml_metadata = {}
-    current_note_id = note_data.get('id')
+    current_note_id = note.id # Use note.id directly
 
     yaml_metadata['id'] = current_note_id
-    yaml_metadata['title'] = note_data.get('title', '') # Default to empty string if title is None
+    
+    # Use note.title directly and verbatim
+    yaml_metadata['title'] = note.title if note.title is not None else ""
 
-    timestamps = note_data.get('timestamps', {})
+    # Add color and pinned status from the note object
+    yaml_metadata['color'] = note.color.name # e.g., "WHITE", "YELLOW"
+    yaml_metadata['pinned'] = note.pinned    # True or False
+
+    timestamps = note_data.get('timestamps', {}) # Keep using note_data for existing timestamp logic for now
     if timestamps.get('created'):
         yaml_metadata['created'] = timestamps['created']
     if timestamps.get('updated'):
@@ -855,50 +890,45 @@ def process_and_save_notes(all_notes_info, vault_base_path):
                 current_target_filename = sanitize_filename(current_keep_title, keep_id)
                 current_target_filepath_ideal = os.path.join(current_target_dir, current_target_filename)
 
-                # needs_move = os.path.normcase(local_filepath) != os.path.normcase(target_filepath_ideal)
                 needs_move = os.path.normpath(local_filepath) != os.path.normpath(current_target_filepath_ideal)
 
                 if needs_move:
                     move_reason = "status change" if os.path.dirname(local_filepath) != os.path.dirname(current_target_filepath_ideal) else "rename"
                     logging.info(f"    File needs move/rename (Reason: {move_reason}) from {os.path.relpath(local_filepath)} to {os.path.relpath(current_target_filepath_ideal)}")
-                    # final_target_filepath = target_filepath_ideal
                     final_target_filepath = current_target_filepath_ideal
                     counter = 1
                     # Check for collisions, avoiding self-comparison
                     while os.path.exists(final_target_filepath) and os.path.normpath(final_target_filepath) != os.path.normpath(local_filepath):
                          logging.warning(f"    Target path {os.path.relpath(final_target_filepath)} exists. Generating new name...")
-                         # name, ext = os.path.splitext(target_filename)
                          name, ext = os.path.splitext(current_target_filename)
                          max_name_len = MAX_FILENAME_LENGTH - len(ext) - len(str(counter)) - 1
                          name = name[:max_name_len]
                          new_filename = f"{name}_{counter}{ext}"
-                         # final_target_filepath = os.path.join(target_dir, new_filename)
                          final_target_filepath = os.path.join(current_target_dir, new_filename)
                          counter += 1
                          if counter > 100:
                               logging.error(f"    Could not find unique target path for moving/renaming note {keep_id}. Skipping move.")
-                              final_target_filepath = None
+                              final_target_filepath = None # Mark as None if no unique name found
                               break
 
-                    # Only move if a valid, different path was found
-                    if final_target_filepath and os.path.normpath(final_target_filepath) != os.path.normpath(local_filepath):
-                        try:
-                            logging.info(f"    Executing move to {os.path.relpath(final_target_filepath)}")
-                            # Ensure target directory exists before moving
-                            os.makedirs(os.path.dirname(final_target_filepath), exist_ok=True)
-                            shutil.move(local_filepath, final_target_filepath)
-                            moved_count += 1
-                            local_info['path'] = final_target_filepath # Update index path
-                        except Exception as e_move:
-                            logging.error(f"    Error moving file {local_filepath} to {final_target_filepath}: {e_move}")
-                            skipped_error_count += 1
-                    elif os.path.normpath(final_target_filepath) == os.path.normpath(local_filepath):
-                         logging.debug(f"    Target move path is same as source, no move needed for {keep_id}.")
-                    else:
-                         # This case means final_target_filepath became None from the loop above
-                         logging.error(f"    Skipping move for {keep_id} due to collision resolution failure.")
+                    # Refactored logic to handle potential None for final_target_filepath
+                    if final_target_filepath: # Check if a valid path was determined (not None)
+                        if os.path.normpath(final_target_filepath) != os.path.normpath(local_filepath):
+                            try:
+                                logging.info(f"    Executing move to {os.path.relpath(final_target_filepath)}")
+                                # Ensure target directory exists before moving
+                                os.makedirs(os.path.dirname(final_target_filepath), exist_ok=True)
+                                shutil.move(local_filepath, final_target_filepath)
+                                moved_count += 1
+                                local_info['path'] = final_target_filepath # Update index path
+                            except Exception as e_move:
+                                logging.error(f"    Error moving file {local_filepath} to {final_target_filepath}: {e_move}")
+                                skipped_error_count += 1
+                        else: # Paths are the same after normalization, no move needed
+                             logging.debug(f"    Target move path is same as source ({os.path.relpath(local_filepath)}), no move needed for {keep_id}.")
+                    else: # final_target_filepath is None (collision resolution failed)
+                         logging.error(f"    Skipping move for {keep_id} due to collision resolution failure finding a unique name.")
                          skipped_error_count += 1
-
                 # --- Check if file needs moving/renaming --- END
 
             else: # === Note is New Locally (local_info is None) ===

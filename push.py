@@ -143,10 +143,12 @@ def save_cached_state(keep):
 # --- Markdown Processing Functions ---
 
 def unescape_hashtags(text):
-    r"""Convert escaped hashtags (\#tag) back to normal hashtags (#tag)."""
+    r"""Convert escaped hashtags (\#char) back to normal hashtags (#char)."""
     if not text:
         return text
-    return re.sub(r'\\#(\\w)', r'#\\1', text)
+    # Make sure we handle all possible patterns of escaped hashtags
+    # Look for a backslash followed by a # character
+    return re.sub(r'\\#([^\s#])', r'#\1', text)
 
 def get_markdown_files(directory):
     """Finds all .md files in the vault, excluding Archived and Trashed."""
@@ -280,6 +282,9 @@ def check_changes_needed(gnote, metadata, content, keep):
 
     # --- Get Remote Data --- # From gnote object
     remote_title = gnote.title
+    # Log a representation that might show hidden characters before any local normalization
+    logging.debug(f"    PUSH_CHECK_DETAIL: Titles at Acquisition - Local (from YAML): {repr(local_title)}, Remote (from Keep): {repr(remote_title)}")
+
     remote_color = gnote.color
     remote_pinned = gnote.pinned
     remote_archived = gnote.archived
@@ -297,28 +302,41 @@ def check_changes_needed(gnote, metadata, content, keep):
 
         # Initialize step2 with step1 content
         local_content_step2 = local_content_step1
-        # Attempt to find and remove H1
-        h1_match = re.match(r'^#\s+(.*?)\r?\n', local_content_step1, re.MULTILINE)
-        if h1_match:
-            logging.debug(f"    PUSH_PREP_DETAIL: H1 found in local content.")
-            h1_title_content = h1_match.group(1).strip()
-            # **CRITICAL FIX**: Assign the H1-removed content correctly
-            local_content_step2 = local_content_step1[h1_match.end():].lstrip('\r\n')
-            if not local_title: # Use H1 content as title if YAML title is missing
-                local_title = h1_title_content
-        # Ensure local_title is at least an empty string if still None
+        
+        # --- Conditional H1 Check/Removal --- START
+        # Only check for H1 in content IF the YAML title was missing/empty
+        if not local_title:
+            h1_match = re.match(r'^#\\s+(.*?)\\r?\\n', local_content_step1, re.MULTILINE)
+            if h1_match:
+                logging.debug(f"    PUSH_PREP_DETAIL: H1 found in local content AND YAML title was empty. Using H1 for title.")
+                h1_title_content = h1_match.group(1).strip()
+                # **CRITICAL FIX**: Assign the H1-removed content correctly
+                local_content_step2 = local_content_step1[h1_match.end():].lstrip('\\r\\n')
+                local_title = h1_title_content # Assign title from H1
+            # else: No H1 found, local_title remains empty, local_content_step2 is unchanged from step1
+        # else: YAML title was present, so do NOT strip H1 from content body (local_content_step2 remains unchanged from step1)
+        # --- Conditional H1 Check/Removal --- END
+
+        # Ensure local_title is at least an empty string if still None/empty after potential H1 logic
         if local_title is None: local_title = ""
         # Log the result *after* the conditional H1 removal
         logging.debug(f"    PUSH_PREP_DETAIL: Local step 2 (H1 removal) content: '{local_content_step2[:100]}...' Title: '{local_title}'") # Log step 2 result
 
         # --- The rest of the preparation steps use local_content_step2 ---
-        attachment_header = "\n## Attachments"
-        attachment_section_index = local_content_step2.find(attachment_header)
-        local_content_step3 = local_content_step2 # Start step 3 with result of step 2
-        if attachment_section_index != -1:
-            logging.debug(f"    PUSH_PREP_DETAIL: Attachments section found in local content.")
-            local_content_step3 = local_content_step2[:attachment_section_index]
-        logging.debug(f"    PUSH_PREP_DETAIL: Local step 3 (Attachment removal) content: '{local_content_step3[:100]}...'") # Log step 3 result
+        # Robustly remove "## Attachments" section and everything after it
+        lines_step2 = local_content_step2.split('\n')
+        content_lines_before_attachments_step2 = []
+        found_attachments_header_step2 = False
+        for line_s2 in lines_step2:
+            if line_s2.strip() == "## Attachments":
+                found_attachments_header_step2 = True
+                logging.debug(f"    PUSH_PREP_DETAIL: Attachments section header found in local content during check_changes_needed.")
+                break
+            content_lines_before_attachments_step2.append(line_s2)
+        
+        local_content_step3 = '\n'.join(content_lines_before_attachments_step2)
+        if not found_attachments_header_step2:
+            logging.debug(f"    PUSH_PREP_DETAIL: Attachments section header NOT found during check_changes_needed.")
 
         local_content_step4 = local_content_step3.replace('\r\n', '\n').replace('\r', '\n')
         logging.debug(f"    PUSH_PREP_DETAIL: Local step 4 (Line ending norm) content: '{local_content_step4[:100]}...'")
@@ -400,9 +418,19 @@ def check_changes_needed(gnote, metadata, content, keep):
          # change_reason.append("content_comparison_error")
 
     # 3. Title Comparison
-    logging.debug(f"    PUSH_CHECK_DETAIL: Titles - Local: '{local_title}', Remote: '{remote_title}'")
-    if remote_title != local_title:
-        logging.debug(f"    PUSH_CHECK_DETAIL: -> Title change detected.")
+    # Normalize both titles: replace newlines/tabs with spaces, collapse multiple spaces, then strip.
+    temp_local_title = local_title.replace('\n', ' ').replace('\t', ' ') if local_title else ""
+    normalized_local_title = ' '.join(temp_local_title.split()).strip()
+
+    temp_remote_title = remote_title.replace('\n', ' ').replace('\t', ' ') if remote_title else ""
+    normalized_remote_title = ' '.join(temp_remote_title.split()).strip()
+
+    logging.debug(f"    PUSH_CHECK_DETAIL: Titles - Local (fully normalized): '{normalized_local_title}', Remote (fully normalized): '{normalized_remote_title}'")
+    # Also log repr of fully normalized titles for extremely subtle diffs
+    logging.debug(f"    PUSH_CHECK_DETAIL: Titles (repr, fully normalized) - Local: {repr(normalized_local_title)}, Remote: {repr(normalized_remote_title)}")
+
+    if normalized_remote_title != normalized_local_title:
+        logging.debug(f"    PUSH_CHECK_DETAIL: -> Title change detected (Fully Normalized comparison).")
         change_reason.append("title")
 
     # 4. List Item Comparison (Placeholder)
@@ -490,14 +518,21 @@ def update_gnote_from_local(gnote, metadata, content, keep):
     if local_title is None:
         local_title = ""
 
-    # 2. Remove Attachments section (if present)
-    attachment_header = "\\n## Attachments"
-    attachment_section_index = content.find(attachment_header)
-    if attachment_section_index != -1:
-        content = content[:attachment_section_index]
+    # 2. Remove Attachments section (if present) - Robustly
+    lines_content = content.split('\n')
+    content_lines_before_attachments = []
+    found_attachments_header = False
+    for line_c in lines_content:
+        if line_c.strip() == "## Attachments":
+            found_attachments_header = True
+            break
+        content_lines_before_attachments.append(line_c)
+    
+    if found_attachments_header:
+        content = '\n'.join(content_lines_before_attachments)
 
-    # 3. Normalize line endings to \\n
-    content = content.replace('\\r\\n', '\\n').replace('\\r', '\\n')
+    # 3. Normalize line endings to \n (already done if split by \n and rejoined)
+    # content = content.replace('\r\n', '\n').replace('\r', '\n') # Might be redundant now
 
     # 4. Unescape hashtags and strip leading/trailing whitespace ONLY
     content = unescape_hashtags(content).strip(' \t')
@@ -614,14 +649,20 @@ def create_gnote_from_local(keep, metadata, content, filepath):
     if h1_match:
         content = content.lstrip()[h1_match.end():].lstrip('\r\n')
 
-    # 2. Remove Attachments section (if present)
-    attachment_header = "\n## Attachments"
-    attachment_section_index = content.find(attachment_header)
-    if attachment_section_index != -1:
-        content = content[:attachment_section_index]
+    # 2. Remove Attachments section (if present) - Robustly
+    lines_content_create = content.split('\n')
+    content_lines_before_attachments_create = []
+    found_attachments_header_create = False
+    for line_cc in lines_content_create:
+        if line_cc.strip() == "## Attachments":
+            found_attachments_header_create = True
+            break
+        content_lines_before_attachments_create.append(line_cc)
+
+    if found_attachments_header_create:
+        content = '\n'.join(content_lines_before_attachments_create)
 
     # 3. Normalize line endings & Unescape hashtags & strip trailing whitespace
-    content = content.replace('\r\n', '\n').replace('\r', '\n')
     content = unescape_hashtags(content).strip(' \t')
     # --- Prepare Content for Creation --- END
 
