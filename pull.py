@@ -23,6 +23,7 @@ import shutil
 from datetime import datetime, timezone
 import argparse
 import yaml # Use PyYAML
+import glob # Added for enhanced local file checking
 
 # --- Logging Setup ---
 LOG_FILE = 'debug_sync.log'
@@ -245,20 +246,35 @@ def download_media_blob(keep, blob, note_id):
         blob_id = str(blob.id)
         # Guess initial extension based on blob type for filename check
         initial_ext = get_file_extension_from_blob(blob)
-        filename = f"{blob_id}.{initial_ext}"
-        filepath = os.path.join(ATTACHMENTS_DIR, filename)
+        filename = f"{blob_id}.{initial_ext}" # This is 'initial_filename'
+        filepath = os.path.join(ATTACHMENTS_DIR, filename) # This is 'initial_filepath'
 
         # Get blob type name
         blob_type_name = "UNKNOWN"
         if hasattr(blob, 'type'):
             blob_type_name = blob.type.name if hasattr(blob.type, 'name') else str(blob.type)
 
-        # Check if file exists - if so, generate metadata and return
+        # Check if file exists with the initial extension guess
         if os.path.exists(filepath):
-            print(f"Attachment {filename} already exists, skipping download.")
+            print(f"Attachment {filename} (ID: {blob_id}) already exists (initial guess: .{initial_ext}), skipping download.")
             return _generate_metadata(blob_id, filename, blob_type_name, initial_ext, blob)
+        else:
+            # Initial guess didn't find the file.
+            # Try a glob pattern to find any file starting with blob_id.*
+            # This catches cases like 'blob_id.jpeg' when initial guess was 'blob_id.jpg', or if initial guess was '.bin'.
+            # This check is done BEFORE any network calls.
+            possible_matches = glob.glob(os.path.join(ATTACHMENTS_DIR, f"{blob_id}.*"))
+            if possible_matches:
+                # A file with this blob_id exists, possibly with a different extension.
+                existing_filepath_glob = possible_matches[0] # Take the first match
+                existing_filename_glob = os.path.basename(existing_filepath_glob)
+                _, existing_ext_glob_with_dot = os.path.splitext(existing_filename_glob)
+                actual_ext_glob = existing_ext_glob_with_dot.lstrip('.')
+                
+                print(f"Attachment {existing_filename_glob} (ID: {blob_id}) already exists (found via glob: .{actual_ext_glob}), skipping download.")
+                return _generate_metadata(blob_id, existing_filename_glob, blob_type_name, actual_ext_glob, blob)
 
-        # --- File doesn't exist, proceed with download attempt ---
+        # --- If we reach here, file doesn't exist locally (neither by initial guess nor by glob). Proceed with download. ---
         media_url = keep.getMediaLink(blob)
         if not media_url:
             if DEBUG: print(f"Warning: Could not get media link for blob {blob.id}")
@@ -439,68 +455,78 @@ def is_note_empty(note_data):
     return not (has_title or has_text or has_list_items or has_attachments or has_annotations)
 
 def convert_note_to_markdown(note, note_data):
-    """Converts a note object and its data into a Markdown string."""
-    # --- Prepare Content ---
-    # Start with the main text content, stripping initial/trailing whitespace
+    """Converts a GKeep note (via note_data) into a Markdown string with frontmatter."""
+    # --- Prepare Markdown Body Content ---
+    # Use text from note object directly, or could use note_data.get('text', '')
     note_text_stripped = note.text.strip() if note.text else ""
-    # Use stripped text; Start content_parts only if note_text_stripped is not empty
     content_parts = [note_text_stripped] if note_text_stripped else []
 
-    # Escape standalone hashtags in the main content part if it exists
-    if content_parts and content_parts[0]: # Check if list is not empty AND first element is not empty
+    if content_parts and content_parts[0]:
         content_parts[0] = escape_hashtags(content_parts[0])
 
-    # Add attachments section if needed
-    attachments = list(note.attachments)
-    if attachments:
+    # --- Attachments Section (using note_data) ---
+    # note_data['attachments'] is a list of dicts like {'filename': 'name.ext', ...}
+    # These files are already downloaded by process_note_media.
+    processed_attachments = note_data.get('attachments', [])
+    if processed_attachments:
         attachment_links = []
-        for attachment in attachments:
-            attachment_filename = sanitize_filename(f"{note.id}_{attachment.name}", note.id) # Pass note_id
-            attachment_full_path = os.path.join(ATTACHMENTS_VAULT_DIR, attachment_filename)
-            # Download if not exists - consider adding overwrite logic if needed
-            if not os.path.exists(attachment_full_path):
-                 if download_media_blob(keep, attachment, note.id):
-                     logging.debug(f"  Downloaded attachment: {attachment_filename}")
-                 else:
-                     logging.warning(f"  Failed to download attachment: {attachment_filename}")
-            # Create relative path for Markdown link
-            attachment_rel_path = os.path.join(os.path.basename(ATTACHMENTS_VAULT_DIR), attachment_filename).replace("\\", "/")
-            attachment_links.append(f"- ![[{attachment_rel_path}]]") # Obsidian link format
+        for attachment_info in processed_attachments:
+            attachment_filename = attachment_info.get('filename')
+            if attachment_filename:
+                # Construct relative path for Obsidian link, e.g., "Attachments/file.jpg"
+                attachment_rel_path = os.path.join(os.path.basename(ATTACHMENTS_VAULT_DIR), attachment_filename).replace("\\", "/")
+                attachment_links.append(f"- ![[{attachment_rel_path}]]")
 
         if attachment_links:
-            # Ensure separation only if there was actual text content before
-            if content_parts: # Check if there was any text content initially
-                content_parts.append("") # Add a blank line for separation
+            if content_parts: # Add a blank line for separation if there's preceding text
+                content_parts.append("")
             content_parts.append("## Attachments")
             content_parts.extend(attachment_links)
 
-    # *** Filter out empty strings from parts before joining ***
-    final_content_parts_filtered = [part for part in content_parts if part is not None and part != ""]
-    final_content_string = "\n".join(final_content_parts_filtered)
+    # Join all parts of the markdown body
+    final_content_string = "\n".join(part for part in content_parts if part is not None and part != "")
 
-    # --- Write to File ---
-    try:
-        yaml_string = yaml.dump(metadata, allow_unicode=True, default_flow_style=False, sort_keys=False) # Use sort_keys=False
+    # --- Prepare YAML Frontmatter ---
+    yaml_metadata = {}
+    current_note_id = note_data.get('id')
 
-        # *** ADDED LOGGING ***
-        logging.debug(f"PULL_WRITE_DETAIL ({note_id}): Final metadata dict prepared: {metadata}")
-        logging.debug(f"PULL_WRITE_DETAIL ({note_id}): Final content string prepared (len={len(final_content_string)}): '{final_content_string[:150].replace('\n', '\\n')}{'...' if len(final_content_string) > 150 else ''}'")
-        logging.debug(f"PULL_WRITE_DETAIL ({note_id}): Final YAML string prepared:\n---\n{yaml_string.strip()}\n---")
-        # *** END ADDED LOGGING ***
+    yaml_metadata['id'] = current_note_id
+    yaml_metadata['title'] = note_data.get('title', '') # Default to empty string if title is None
 
-        # Define the full file content cleanly (Attempt 3)
-        full_file_content = f"---\n{yaml_string}---
-{final_content_string}"
+    timestamps = note_data.get('timestamps', {})
+    if timestamps.get('created'):
+        yaml_metadata['created'] = timestamps['created']
+    if timestamps.get('updated'):
+        yaml_metadata['updated'] = timestamps['updated']
+    if timestamps.get('userEdited'): # from note.timestamps.userEdited
+        yaml_metadata['edited'] = timestamps['userEdited']
 
-        with open(filepath, 'w', encoding='utf-8') as f:
-            f.write(full_file_content)
-        # print(f"  Synced: {os.path.basename(filepath)}") # Keep original less verbose output
-        return True # Indicate success
+    labels_data = note_data.get('labels') # Expected: list of dicts [{'name': 'LabelName'}, ...]
+    if labels_data and isinstance(labels_data, list):
+        label_names = [label.get('name').replace(' ', '_') for label in labels_data if label.get('name')]
+        if label_names: # Only add 'tags' key if there are actual label names
+            yaml_metadata['tags'] = label_names
 
-    except Exception as e:
-        print(f"Error writing note to file: {e}")
-        traceback.print_exc()
-        return False # Indicate failure
+    yaml_metadata['archived'] = note.archived
+    yaml_metadata['trashed'] = note.trashed
+
+    # Convert metadata dict to YAML string. sort_keys=False preserves order.
+    yaml_string = yaml.dump(yaml_metadata, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+    # Log details if note_id is available
+    if current_note_id:
+        logging.debug(f"PULL_CONVERT_MARKDOWN ({current_note_id}): Final metadata for YAML: {yaml_metadata}")
+        # Truncate long content strings in logs
+        log_content_preview = final_content_string[:150].replace('\n', '\\n')
+        if len(final_content_string) > 150:
+            log_content_preview += "..."
+        logging.debug(f"PULL_CONVERT_MARKDOWN ({current_note_id}): Final content string (len={len(final_content_string)}): '{log_content_preview}'")
+        logging.debug(f"PULL_CONVERT_MARKDOWN ({current_note_id}): Final YAML string prepared:\n---\n{yaml_string.strip()}\n---")
+
+    # Combine YAML frontmatter and markdown body
+    full_file_content = f"---\n{yaml_string.strip()}\n---\n{final_content_string}"
+
+    return full_file_content
 
 def parse_markdown_file(filepath):
     """Loads and parses a single markdown file manually, returning metadata or None."""

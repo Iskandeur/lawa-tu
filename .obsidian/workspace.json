@@ -4,24 +4,17 @@
     "type": "split",
     "children": [
       {
-        "id": "6b408ebced4ec1bc",
+        "id": "54d54c885506f10c",
         "type": "tabs",
         "children": [
           {
-            "id": "af6213d3eb8986fc",
+            "id": "53850a8ca8008957",
             "type": "leaf",
             "state": {
-              "type": "canvas",
-              "state": {
-                "file": "Untitled.canvas",
-                "viewState": {
-                  "x": 0,
-                  "y": 0,
-                  "zoom": 0
-                }
-              },
-              "icon": "lucide-layout-dashboard",
-              "title": "Untitled"
+              "type": "empty",
+              "state": {},
+              "icon": "lucide-file",
+              "title": "New tab"
             }
           }
         ]
@@ -77,7 +70,8 @@
               "title": "Bookmarks"
             }
           }
-        ]
+        ],
+        "currentTab": 2
       }
     ],
     "direction": "horizontal",
@@ -168,7 +162,7 @@
       "command-palette:Open command palette": false
     }
   },
-  "active": "af6213d3eb8986fc",
+  "active": "fbe3807895627db9",
   "lastOpenFiles": [
     "gkeep_docs.md",
     "KeepVault/Trains_CEP.md",
