@@ -10,6 +10,10 @@ __pycache__/
 
 keep_state.json
 keep_notes.json
-/KeepVault
+/KeepVault/
 debug_sync.log
 logs_console.txt
+*.zip
+*.log
+*.txt
+vault_backups/

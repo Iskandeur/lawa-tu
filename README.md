@@ -106,8 +106,9 @@ Run the scripts from your terminal in the project directory.
 2.  **Edit in Obsidian:** Open the `KeepVault` directory as an Obsidian vault. Edit notes, create new notes (as `.md` files).
 3.  **Push Changes:** Run `python push.py` to upload your local changes (updates, new notes) back to Google Keep.
 4.  **Pull Remote Changes:** Run `python pull.py` regularly to fetch any changes made directly in Google Keep (or on other devices) down to your Obsidian vault.
+5.  **Clean up Single-Use Tags:** Run `python remove_single_use_tags.py` to remove tags that are only used in a single note.
 
-*Repeat steps 2-4 as needed.*
+*Repeat steps 2-5 as needed.*
 
 ## File Structure
 
@@ -117,6 +118,7 @@ Run the scripts from your terminal in the project directory.
 *   `KeepVault/Attachments/`: Downloaded media files (images, audio, etc.).
 *   `pull.py`: Script to download notes from Keep.
 *   `push.py`: Script to upload local changes to Keep.
+*   `remove_single_use_tags.py`: Script to clean up tags that are only used in one note.
 *   `keep_state.json`: Cache file storing state from Google Keep to speed up syncs. Can be deleted to force a full refresh (`--full-sync`).
 *   `keep_notes.json`: Raw JSON dump of notes downloaded during the last `pull.py` run (for debugging/reference).
 *   `.env`: Stores configuration (email, optional credentials). **Add this to `.gitignore` if using version control.**

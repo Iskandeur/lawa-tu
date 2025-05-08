@@ -1,5 +1,7 @@
-gkeepapi
+gkeepapi>=0.14.3
 keyring
 gpsoauth
 python-dotenv
-PyYAML 
+PyYAML
+requests
+# Optional: python-magic (for better attachment type detection) 
