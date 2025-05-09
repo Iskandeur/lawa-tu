@@ -4,4 +4,6 @@ gpsoauth
 python-dotenv
 PyYAML
 requests
-# Optional: python-magic (for better attachment type detection) 
+matplotlib
+numpy
+# Optional: python-magic (for better attachment type detection)

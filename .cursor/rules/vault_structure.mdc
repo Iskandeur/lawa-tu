@@ -3,3 +3,13 @@ description:
 globs:
 alwaysApply: false
 ---
+# Vault Directory Structure
+
+The local notes are organized within the `KeepVault` directory:
+
+*   **`KeepVault/`**: Contains the Markdown (`.md`) files for active, non-archived, non-trashed notes.
+*   **`KeepVault/Archived/`**: Contains Markdown files for notes that are marked as archived in Google Keep. The `pull.py` script moves files here from the root or `Trashed` if the note's status changes in Keep.
+*   **`KeepVault/Trashed/`**: Contains Markdown files for notes that are marked as trashed in Google Keep. `pull.py` moves files here.
+*   **`KeepVault/Attachments/`**: Stores all downloaded media files (images, audio, etc.) associated with Keep notes. Markdown files link to these using Obsidian's `![[...]]` syntax.
+
+This structure mirrors the note status in Google Keep, managed primarily by the [pull.py](mdc:pull.py) script.

@@ -3,3 +3,14 @@ description:
 globs:
 alwaysApply: false
 ---
+# Synchronization Flow
+
+The core data flow for synchronization is as follows:
+
+1.  **Google Keep (Remote):** The source of truth for notes initially.
+2.  **[pull.py](mdc:pull.py):** Reads from Keep, downloads notes/attachments, converts to Markdown with YAML frontmatter, updates local files based on timestamps, and organizes files into `KeepVault`, `Archived`, `Trashed`.
+3.  **Local Vault (`KeepVault/`):** Markdown files (`.md`) are edited here (e.g., using Obsidian).
+4.  **[push.py](mdc:push.py):** Reads local Markdown files, compares timestamps and content with Keep, creates/updates notes in Keep based on local changes.
+5.  **Google Keep (Remote):** Reflects changes pushed from the local vault.
+
+Synchronization is manual; `pull.py` and `push.py` must be run explicitly. See [README.md](mdc:README.md) for workflow details and conflict handling.

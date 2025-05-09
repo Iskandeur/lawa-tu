@@ -3,3 +3,13 @@ description:
 globs:
 alwaysApply: false
 ---
+# Configuration and Cache Files
+
+Key auxiliary files used by the scripts:
+
+*   **[.env](mdc:.env):** Stores configuration, primarily the `GOOGLE_KEEP_EMAIL` and optionally authentication credentials (`GOOGLE_KEEP_MASTER_TOKEN` or `GOOGLE_KEEP_APP_PASSWORD`). Should be added to `.gitignore`.
+*   **[requirements.txt](mdc:requirements.txt):** Lists Python package dependencies required to run the scripts.
+*   **[keep_state.json](mdc:keep_state.json):** Caches the state fetched from Google Keep during a `pull.py` or `push.py` sync. Used by `gkeepapi` to potentially speed up subsequent syncs by only fetching changes. Can be safely deleted to force a full sync (`--full-sync` argument).
+*   **[keep_notes.json](mdc:keep_notes.json):** Contains a raw JSON dump of the notes processed during the last `pull.py` run. Primarily used for debugging or reference.
+
+See the [README.md](mdc:README.md) for setup instructions.

@@ -476,10 +476,10 @@ def convert_note_to_markdown(note, note_data):
         
         # 3. Filter blank lines (lines that are empty or only whitespace) (as in push.py remote prep)
         #    A line is blank if line.strip() == ""
-        non_blank_lines = [line for line in lines if line.strip() != ""]
+        # non_blank_lines = [line for line in lines if line.strip() != ""] # MODIFIED: Removed this line
         
         # 4. Strip trailing whitespace from each non-blank line (as in push.py remote prep)
-        stripped_trailing_lines = [line.rstrip() for line in non_blank_lines]
+        stripped_trailing_lines = [line.rstrip() for line in lines] # MODIFIED: Use 'lines'
         
         # 5. Join back
         cleaned_text_block = '\n'.join(stripped_trailing_lines)
