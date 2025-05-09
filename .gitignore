@@ -17,3 +17,6 @@ logs_console.txt
 *.log
 *.txt
 vault_backups/
+.venv/
+.cursor/
+.obsidian/
