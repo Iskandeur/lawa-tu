@@ -1337,6 +1337,8 @@ def run_push(keep, args, counters):
         local_updated_dt = local_metadata.get('updated_dt') # Parsed datetime
 
         action_disposition = 'skip_no_decision' # Default
+        conflict_details_for_automatic_exit = None
+
 
         try:
             if local_keep_id: # Local file has a Keep ID
@@ -1345,7 +1347,32 @@ def run_push(keep, args, counters):
                     is_different, diff_reasons = check_changes_needed_for_push(gnote, local_metadata, local_content_raw, keep)
                     
                     if is_different:
-                        if args.cherry_pick:
+                        if args.automatic_sync:
+                            if args.cherry_pick:
+                                logging.warning("  PUSH: --automatic-sync is enabled, --cherry-pick will be ignored.")
+                            # Automatic mode conflict resolution
+                            remote_updated_dt = gnote.timestamps.updated.replace(tzinfo=timezone.utc) if gnote.timestamps.updated else None
+                            if args.force_push:
+                                action_disposition = 'update_remote'
+                                logging.debug(f"  PUSH (AUTO): --force-push active for {local_keep_id}. Marking for update.")
+                            elif local_updated_dt and remote_updated_dt and local_updated_dt > remote_updated_dt:
+                                action_disposition = 'update_remote'
+                                logging.debug(f"  PUSH (AUTO): Local timestamp newer for {local_keep_id}. Marking for update.")
+                            elif remote_updated_dt and local_updated_dt and remote_updated_dt > local_updated_dt:
+                                logging.warning(f"  PUSH (AUTO): Conflict! Remote note {local_keep_id} ('{gnote.title}') is newer. Skipping push. (Local: {local_updated_dt}, Remote: {remote_updated_dt})")
+                                counters['push_skipped_conflict_remote_newer'] += 1
+                                action_disposition = 'skip_conflict_remote_newer'
+                            else: # Timestamps inconclusive, or local older/same and no force_push
+                                conflict_message = (
+                                    f"Unresolved conflict for note ID {local_keep_id} ('{gnote.title}') in automatic mode.\n"
+                                    f"  File: {rel_filepath}\n"
+                                    f"  Differences: {', '.join(diff_reasons)}\n"
+                                    f"  Local Timestamp: {local_updated_dt}, Remote Timestamp: {remote_updated_dt}\n"
+                                    f"  Run manually or use --cherry-pick to resolve."
+                                )
+                                conflict_details_for_automatic_exit = conflict_message
+                                action_disposition = 'exit_on_conflict' # Special disposition
+                        elif args.cherry_pick:
                             decision = perform_cherry_pick_interaction(gnote, local_metadata, local_content_raw, filepath, keep, args, VAULT_DIR, counters)
                             if decision == 'CHOOSE_LOCAL': action_disposition = 'update_remote'
                             # CHOOSE_REMOTE (local updated), CHOOSE_SKIP, DRY_RUN_PROMPT => no remote update
@@ -1406,6 +1433,10 @@ def run_push(keep, args, counters):
                 actions_to_perform.append({'type': 'update', 'filepath': filepath, 'local_metadata': local_metadata, 'local_content_raw': local_content_raw, 'gnote_to_update': gnote})
             elif action_disposition == 'create_new_remote':
                 actions_to_perform.append({'type': 'create', 'filepath': filepath, 'local_metadata': local_metadata, 'local_content_raw': local_content_raw})
+            elif action_disposition == 'exit_on_conflict' and conflict_details_for_automatic_exit:
+                logging.error("PUSH (AUTO): Exiting due to unresolved conflict.")
+                print(f"AUTOMATIC SYNC ERROR: {conflict_details_for_automatic_exit}", file=sys.stderr)
+                sys.exit(1) # Exit the script
         
         except Exception as e_analyze:
             logging.error(f"PUSH: Error analyzing file {rel_filepath} for push: {e_analyze}", exc_info=DEBUG)
@@ -1431,15 +1462,19 @@ def run_push(keep, args, counters):
     elif not total_to_push:
         print("\nPUSH: No notes marked for creation or update in Google Keep.")
         # Report cherry-pick outcomes even if no push happens
-        if args.cherry_pick:
+        if args.cherry_pick and not args.automatic_sync: # Only report if cherry_pick was active and not overridden
             if counters['push_cherrypick_remote_chosen_local_updated'] > 0: print(f"  (Cherry-pick: {counters['push_cherrypick_remote_chosen_local_updated']} local files were updated from remote choice)")
             if counters['push_cherrypick_user_skipped'] > 0: print(f"  (Cherry-pick: {counters['push_cherrypick_user_skipped']} notes were skipped by user choice)")
-    elif args.force_push:
-        print("\n--- PUSH: Applying Changes to Keep (--force-push specified) ---")
+    elif args.force_push or args.automatic_sync: # Proceed if force_push or automatic_sync enabled
+        print("\n--- PUSH: Applying Changes to Keep ---")
+        if args.force_push and not args.automatic_sync:
+             print("(Note: --force-push specified, will overwrite remote if newer, unless cherry-pick chose remote)")
+        elif args.automatic_sync:
+            print("(Note: --automatic-sync enabled, proceeding with calculated changes)")
         if creates_planned: print(f"Will create {len(creates_planned)} notes in Keep.")
-        if updates_planned: print(f"Will update {len(updates_planned)} notes in Keep (overwriting remote if newer, unless cherry-pick).")
+        if updates_planned: print(f"Will update {len(updates_planned)} notes in Keep.")
         proceed_with_push = True
-    else: # Not dry run, not forced, and changes exist
+    else: # Not dry run, not forced, not automatic_sync, and changes exist
         print("\n--- PUSH: Review Potential Changes to Google Keep ---")
         if creates_planned: print(f"Will create {len(creates_planned)} notes:")
         for item in creates_planned: print(f"  - From: {os.path.relpath(item['filepath'], VAULT_DIR)}")
@@ -1769,6 +1804,7 @@ def main():
     # Combined operation args
     parser.add_argument("--skip-pull", action="store_true", help="Skip the PULL operation.")
     parser.add_argument("--skip-push", action="store_true", help="Skip the PUSH operation.")
+    parser.add_argument("--automatic-sync", action="store_true", help="Enable automatic sync mode: no prompts for push, exit on unresolved conflicts.")
 
 
     args = parser.parse_args()
