@@ -45,6 +45,15 @@ logging.basicConfig(
 logging.info("--- sync.py execution started ---")
 # --- End Logging Setup ---
 
+# --- Determine Local Timezone ---
+LOCAL_TZ = None
+try:
+    LOCAL_TZ = datetime.now().astimezone().tzinfo
+    # Logging of this will be done in main() after logger is fully set up
+except Exception: # Broad exception as determining tz can be tricky
+    pass # Warning will be logged in main() if it remains None
+# --- End Local Timezone Determination ---
+
 # --- Constants ---
 SERVICE_NAME = "google-keep-token"
 VAULT_DIR = "KeepVault"
@@ -250,9 +259,12 @@ def parse_markdown_file(filepath, for_push=False):
         if for_push:
             if 'updated' in metadata:
                 try:
-                    ts_str = str(metadata['updated']).rstrip('Z')
-                    if ts_str: metadata['updated_dt'] = datetime.fromisoformat(ts_str).replace(tzinfo=timezone.utc)
-                    else: metadata['updated_dt'] = None
+                    ts_str = str(metadata['updated'])
+                    if ts_str:
+                        aware_dt = datetime.fromisoformat(ts_str)
+                        metadata['updated_dt'] = aware_dt.astimezone(timezone.utc)
+                    else:
+                        metadata['updated_dt'] = None
                 except (TypeError, ValueError): metadata['updated_dt'] = None
             else: metadata['updated_dt'] = None
             return metadata, "".join(content_lines)
@@ -263,9 +275,12 @@ def parse_markdown_file(filepath, for_push=False):
             for ts_key in ['created', 'updated', 'edited']:
                 if ts_key in metadata:
                     try:
-                        ts_str = str(metadata[ts_key]).rstrip('Z')
-                        if ts_str: metadata[f'{ts_key}_dt'] = datetime.fromisoformat(ts_str).replace(tzinfo=timezone.utc)
-                        else: metadata[f'{ts_key}_dt'] = None
+                        ts_str = str(metadata[ts_key])
+                        if ts_str:
+                            aware_dt = datetime.fromisoformat(ts_str)
+                            metadata[f'{ts_key}_dt'] = aware_dt.astimezone(timezone.utc)
+                        else:
+                            metadata[f'{ts_key}_dt'] = None
                     except (TypeError, ValueError) as e_ts:
                         logging.warning(f"Could not parse '{ts_key}' timestamp ('{metadata.get(ts_key)}') in {filepath}: {e_ts}.")
                         metadata[f'{ts_key}_dt'] = None
@@ -578,13 +593,29 @@ def convert_note_to_markdown(note_obj, note_data_dict):
         'pinned': note_obj.pinned
     }
     if note_obj.timestamps.created:
-        yaml_metadata['created'] = note_obj.timestamps.created.isoformat().replace('+00:00', 'Z')
+        dt_utc = note_obj.timestamps.created
+        if LOCAL_TZ:
+            yaml_metadata['created'] = dt_utc.astimezone(LOCAL_TZ).isoformat()
+        else:
+            yaml_metadata['created'] = dt_utc.isoformat().replace('+00:00', 'Z')
     if note_obj.timestamps.updated:
-        yaml_metadata['updated'] = note_obj.timestamps.updated.isoformat().replace('+00:00', 'Z')
+        dt_utc = note_obj.timestamps.updated
+        if LOCAL_TZ:
+            yaml_metadata['updated'] = dt_utc.astimezone(LOCAL_TZ).isoformat()
+        else:
+            yaml_metadata['updated'] = dt_utc.isoformat().replace('+00:00', 'Z')
     if hasattr(note_obj.timestamps, 'userEdited') and note_obj.timestamps.userEdited:
-         yaml_metadata['edited'] = note_obj.timestamps.userEdited.isoformat().replace('+00:00', 'Z')
+         dt_utc = note_obj.timestamps.userEdited
+         if LOCAL_TZ:
+             yaml_metadata['edited'] = dt_utc.astimezone(LOCAL_TZ).isoformat()
+         else:
+             yaml_metadata['edited'] = dt_utc.isoformat().replace('+00:00', 'Z')
     elif hasattr(note_obj.timestamps, 'edited') and note_obj.timestamps.edited: # Fallback
-         yaml_metadata['edited'] = note_obj.timestamps.edited.isoformat().replace('+00:00', 'Z')
+         dt_utc = note_obj.timestamps.edited
+         if LOCAL_TZ:
+             yaml_metadata['edited'] = dt_utc.astimezone(LOCAL_TZ).isoformat()
+         else:
+             yaml_metadata['edited'] = dt_utc.isoformat().replace('+00:00', 'Z')
 
     labels = note_obj.labels.all()
     if labels:
@@ -1468,7 +1499,7 @@ def run_push(keep, args, counters):
     elif args.force_push or args.automatic_sync: # Proceed if force_push or automatic_sync enabled
         print("\n--- PUSH: Applying Changes to Keep ---")
         if args.force_push and not args.automatic_sync:
-             print("(Note: --force-push specified, will overwrite remote if newer, unless cherry-pick chose remote)")
+             print("(Note: --force-push specified, will overwrite remote if newer, unless cherry-pick)")
         elif args.automatic_sync:
             print("(Note: --automatic-sync enabled, proceeding with calculated changes)")
         if creates_planned: print(f"Will create {len(creates_planned)} notes in Keep.")
@@ -1557,9 +1588,17 @@ def run_push(keep, args, counters):
                                 updated_yaml_metadata['id'] = created_gnote.id
                                 updated_yaml_metadata['title'] = created_gnote.title # Use title from Keep
                                 if created_gnote.timestamps.created:
-                                    updated_yaml_metadata['created'] = created_gnote.timestamps.created.isoformat().replace('+00:00', 'Z')
+                                    dt_utc_created = created_gnote.timestamps.created
+                                    if LOCAL_TZ:
+                                        updated_yaml_metadata['created'] = dt_utc_created.astimezone(LOCAL_TZ).isoformat()
+                                    else:
+                                        updated_yaml_metadata['created'] = dt_utc_created.isoformat().replace('+00:00', 'Z')
                                 if created_gnote.timestamps.updated:
-                                    updated_yaml_metadata['updated'] = created_gnote.timestamps.updated.isoformat().replace('+00:00', 'Z')
+                                    dt_utc_updated = created_gnote.timestamps.updated
+                                    if LOCAL_TZ:
+                                        updated_yaml_metadata['updated'] = dt_utc_updated.astimezone(LOCAL_TZ).isoformat()
+                                    else:
+                                        updated_yaml_metadata['updated'] = dt_utc_updated.isoformat().replace('+00:00', 'Z')
                                 
                                 updated_yaml_metadata.pop('updated_dt', None) # Remove parsed dt object
 
@@ -1621,8 +1660,27 @@ def update_sync_log_note(keep, counters, vault_dir, sync_start_time_iso, args):
 
     # Prepare summary content
     summary_parts = []
-    summary_parts.append(f"Sync operation started: {sync_start_time_iso}")
-    summary_parts.append(f"Sync operation completed: {sync_completed_time_iso}")
+    
+    # Convert sync_start_time_iso (string from main, UTC 'Z') to local for display
+    display_start_time_str = sync_start_time_iso # Fallback to original UTC string
+    if LOCAL_TZ:
+        try:
+            # Parse the UTC 'Z' string
+            dt_start_utc = datetime.fromisoformat(sync_start_time_iso.replace('Z', '+00:00'))
+            display_start_time_str = dt_start_utc.astimezone(LOCAL_TZ).isoformat(sep=' ', timespec='seconds')
+        except Exception as e_log_time:
+            logging.warning(f"SYNC_LOG: Could not convert start time to local for log display: {e_log_time}")
+
+    # Convert current_op_time_utc (datetime object, UTC) to local for display
+    display_completed_time_str = sync_completed_time_iso # Fallback to original UTC string
+    if LOCAL_TZ:
+        try:
+            display_completed_time_str = current_op_time_utc.astimezone(LOCAL_TZ).isoformat(sep=' ', timespec='seconds')
+        except Exception as e_log_time:
+            logging.warning(f"SYNC_LOG: Could not convert completed time to local for log display: {e_log_time}")
+
+    summary_parts.append(f"Sync operation started: {display_start_time_str}")
+    summary_parts.append(f"Sync operation completed: {display_completed_time_str}")
     summary_parts.append("") # Add a blank line
 
     summary_parts.append("## Pull Summary") # Changed to H2 Markdown header
@@ -1819,6 +1877,10 @@ def main():
         gkeepapi_logger = logging.getLogger('gkeepapi.parser')
         gkeepapi_logger.setLevel(logging.WARNING)
 
+    if LOCAL_TZ:
+        logging.info(f"Successfully determined local timezone: {LOCAL_TZ}. Timestamps in YAML will use this offset.")
+    else:
+        logging.warning("Could not automatically determine local timezone. Timestamps in YAML will be UTC ('Z').")
 
     load_dotenv()
     email = args.email or os.getenv("GOOGLE_KEEP_EMAIL")
