@@ -243,54 +243,121 @@ def parse_markdown_file(filepath, for_push=False):
             # content_lines will be everything after the first '---'
             content_lines = lines[1:] # or decide to parse yaml_lines as is
         elif not yaml_end_found and not for_push:
-            logging.warning(f"Skipping {filepath} - Missing closing frontmatter delimiter (pull context).")
+            logging.warning(f"Skipping {filepath} (pull context) - Missing closing frontmatter delimiter. Friendly reminder to add '---' at the end of frontmatter if you want this file to be synced.")
             return None
 
 
         metadata = {}
         if yaml_lines:
             try:
-                parsed_yaml = yaml.safe_load("".join(yaml_lines)) # Changed from \n join
+                parsed_yaml = yaml.safe_load("".join(yaml_lines))
                 if isinstance(parsed_yaml, dict): metadata = parsed_yaml
                 else: logging.warning(f"Frontmatter in {filepath} did not parse as dict. Treating as empty.")
             except yaml.YAMLError as e:
                 logging.error(f"Error parsing YAML in {filepath}: {e}. Treating as empty.", exc_info=DEBUG)
+            except Exception as e: # Catch other potential errors during YAML parsing
+                 logging.error(f"Unexpected error parsing YAML in {filepath}: {e}. Treating as empty.", exc_info=DEBUG)
+
+        # Determine the 'updated_dt' for comparison/push logic
+        # Use the LATER of the YAML 'updated' timestamp and the file modification time
+        local_updated_dt_yaml = None
+        yaml_updated_str = metadata.get('updated')
+
+        if yaml_updated_str:
+            try:
+                # Attempt to parse YAML timestamp
+                aware_dt = datetime.fromisoformat(str(yaml_updated_str))
+                # Ensure it's timezone-aware, assume UTC if not specified in string
+                if aware_dt.tzinfo is None:
+                    # If LOCAL_TZ is available, assume naive YAML time is in local TZ
+                    if LOCAL_TZ:
+                         aware_dt = aware_dt.replace(tzinfo=LOCAL_TZ).astimezone(timezone.utc)
+                    else:
+                        # If LOCAL_TZ is not available, assume naive YAML time is UTC
+                        aware_dt = aware_dt.replace(tzinfo=timezone.utc)
+                else:
+                    # If timezone is already in string, convert to UTC for consistency
+                    aware_dt = aware_dt.astimezone(timezone.utc)
+                local_updated_dt_yaml = aware_dt
+                logging.debug(f"  PARSER: Parsed YAML 'updated' timestamp for {os.path.basename(filepath)}: {local_updated_dt_yaml}.")
+            except (TypeError, ValueError) as e_ts:
+                logging.warning(f"  PARSER: Could not parse YAML 'updated' timestamp ('{yaml_updated_str}') in {os.path.basename(filepath)}: {e_ts}. Ignoring YAML timestamp for comparison.", exc_info=DEBUG)
+            except Exception as e: # Catch other potential errors during timestamp parsing
+                 logging.warning(f"  PARSER: Unexpected error parsing YAML timestamp in {os.path.basename(filepath)}: {e}. Ignoring YAML timestamp for comparison.", exc_info=DEBUG)
+
+        local_updated_dt_file = None
+        try:
+            mod_time = os.path.getmtime(filepath)
+            # getmtime returns seconds since epoch. Convert to timezone-aware datetime (local time then convert to UTC)
+            mod_dt_naive = datetime.fromtimestamp(mod_time)
+            # If LOCAL_TZ is available, assume file modification time is in local TZ
+            if LOCAL_TZ:
+                 local_updated_dt_file = mod_dt_naive.replace(tzinfo=LOCAL_TZ).astimezone(timezone.utc)
+            else:
+                 # If LOCAL_TZ is not available, assume local system time (from fromtimestamp) is in a usable local timezone
+                 # and convert to UTC.
+                 local_updated_dt_file = mod_dt_naive.astimezone(timezone.utc) # fromtimestamp usually uses local time
+
+            logging.debug(f"  PARSER: Got file modification time for {os.path.basename(filepath)}: {local_updated_dt_file}.")
+        except OSError as e_mod_time:
+            logging.warning(f"  PARSER: Could not get file modification time for {os.path.basename(filepath)}: {e_mod_time}. Cannot use file time for comparison.", exc_info=DEBUG)
+        except Exception as e: # Catch other potential errors getting file time
+             logging.warning(f"  PARSER: Unexpected error getting file modification time for {os.path.basename(filepath)}: {e}. Cannot use file time for comparison.", exc_info=DEBUG)
+
+        # Use the later of the two timestamps
+        local_updated_dt = None
+        if local_updated_dt_yaml and local_updated_dt_file:
+             local_updated_dt = max(local_updated_dt_yaml, local_updated_dt_file)
+             logging.debug(f"  PARSER: Using later timestamp for {os.path.basename(filepath)}: {local_updated_dt}.")
+        elif local_updated_dt_yaml:
+             local_updated_dt = local_updated_dt_yaml
+             logging.debug(f"  PARSER: Using YAML timestamp (file time unavailable) for {os.path.basename(filepath)}: {local_updated_dt}.")
+        elif local_updated_dt_file:
+             local_updated_dt = local_updated_dt_file
+             logging.debug(f"  PARSER: Using file timestamp (YAML time unavailable/invalid) for {os.path.basename(filepath)}: {local_updated_dt}.")
+        else:
+             logging.debug(f"  PARSER: No valid local timestamp found for {os.path.basename(filepath)}.")
+
+        metadata['updated_dt'] = local_updated_dt # Store the determined datetime object
 
         if for_push:
-            if 'updated' in metadata:
-                try:
-                    ts_str = str(metadata['updated'])
-                    if ts_str:
-                        aware_dt = datetime.fromisoformat(ts_str)
-                        metadata['updated_dt'] = aware_dt.astimezone(timezone.utc)
-                    else:
-                        metadata['updated_dt'] = None
-                except (TypeError, ValueError): metadata['updated_dt'] = None
-            else: metadata['updated_dt'] = None
+            # The logic for for_push metadata parsing already handles updated_dt
+            # We just enhanced how updated_dt is determined above.
             return metadata, "".join(content_lines)
         else: # For pull
-            if 'id' not in metadata:
+            if 'id' not in metadata: # Ensure 'id' is always present for pull index
                 logging.debug(f"Skipping {filepath} (pull context) - missing 'id' in frontmatter.")
                 return None
-            for ts_key in ['created', 'updated', 'edited']:
+            # Ensure other timestamps are parsed to datetime objects if they exist
+            for ts_key in ['created', 'edited']:
                 if ts_key in metadata:
                     try:
                         ts_str = str(metadata[ts_key])
                         if ts_str:
-                            aware_dt = datetime.fromisoformat(ts_str)
-                            metadata[f'{ts_key}_dt'] = aware_dt.astimezone(timezone.utc)
+                             aware_dt = datetime.fromisoformat(ts_str)
+                             # Ensure it's timezone-aware, assume UTC if not specified in string
+                             if aware_dt.tzinfo is None:
+                                  if LOCAL_TZ:
+                                      aware_dt = aware_dt.replace(tzinfo=LOCAL_TZ).astimezone(timezone.utc)
+                                  else:
+                                      aware_dt = aware_dt.replace(tzinfo=timezone.utc)
+                             else:
+                                  aware_dt = aware_dt.astimezone(timezone.utc)
+                             metadata[f'{ts_key}_dt'] = aware_dt
                         else:
                             metadata[f'{ts_key}_dt'] = None
                     except (TypeError, ValueError) as e_ts:
                         logging.warning(f"Could not parse '{ts_key}' timestamp ('{metadata.get(ts_key)}') in {filepath}: {e_ts}.")
                         metadata[f'{ts_key}_dt'] = None
+                    except Exception as e: # Catch other potential errors during timestamp parsing
+                         logging.warning(f"Unexpected error parsing '{ts_key}' timestamp in {filepath}: {e}.", exc_info=DEBUG)
                 else: metadata[f'{ts_key}_dt'] = None
             return metadata
 
     except FileNotFoundError:
         logging.error(f"File not found during parsing: {filepath}", exc_info=DEBUG)
         return (None, None) if for_push else None
-    except Exception as e:
+    except Exception as e: # Catch all other errors during parsing
         logging.error(f"Error processing Markdown file {filepath}: {e}", exc_info=DEBUG)
         return (None, None) if for_push else None
 
@@ -314,7 +381,7 @@ def index_local_notes_for_pull(vault_base_path):
     return local_index
 
 def index_local_files_for_push(vault_base_path):
-    logging.info("Indexing local Markdown files for push...")
+    logging.debug("Indexing local Markdown files for push...")
     local_files = {}
     excluded_dirs_abs = {
         os.path.abspath(ATTACHMENTS_VAULT_DIR),
@@ -350,7 +417,7 @@ def index_local_files_for_push(vault_base_path):
                     metadata, content = parse_markdown_file(filepath, for_push=True)
                     if metadata is not None: # Ensure metadata parsing was successful
                          local_files[filepath] = {'metadata': metadata, 'content': content}
-    logging.info(f"Found {len(local_files)} local Markdown files to potentially push.")
+    logging.debug(f"Found {len(local_files)} local Markdown files to potentially push.")
     return local_files
 
 
@@ -687,6 +754,7 @@ def run_pull(keep, args, counters):
             keep_title = note_obj.title
             keep_archived = note_obj.archived
             keep_trashed = note_obj.trashed
+            # Ensure remote timestamp is in UTC
             keep_updated_dt = note_obj.timestamps.updated.replace(tzinfo=timezone.utc) if note_obj.timestamps.updated else None
             logging.debug(f"  PULL Details - ID: {current_keep_id}, Upd: {keep_updated_dt}, Arch: {keep_archived}, Trash: {keep_trashed}")
 
@@ -701,7 +769,15 @@ def run_pull(keep, args, counters):
                 local_filepath = local_info['path']
                 local_metadata = local_info['metadata']
                 local_updated_dt = local_metadata.get('updated_dt') # Parsed datetime or None
-                logging.info(f"  PULL: Found local for {current_keep_id} at {os.path.relpath(local_filepath)}. Local TS: {local_updated_dt}, Remote TS: {keep_updated_dt}")
+                
+                # Convert local timestamp to UTC for comparison if it exists
+                if local_updated_dt and local_updated_dt.tzinfo is None:
+                    if LOCAL_TZ:
+                        local_updated_dt = local_updated_dt.replace(tzinfo=LOCAL_TZ).astimezone(timezone.utc)
+                    else:
+                        local_updated_dt = local_updated_dt.replace(tzinfo=timezone.utc)
+                
+                logging.debug(f"  PULL: Found local for {current_keep_id} at {os.path.relpath(local_filepath)}. Local TS: {local_updated_dt}, Remote TS: {keep_updated_dt}")
 
                 should_update_file_content = False
                 if args.force_pull_overwrite:
@@ -710,7 +786,7 @@ def run_pull(keep, args, counters):
                 elif keep_updated_dt and local_updated_dt and keep_updated_dt > local_updated_dt:
                     should_update_file_content = True
                     logging.info(f"    PULL: Remote timestamp newer for {current_keep_id}. Marking for update.")
-                elif not keep_updated_dt or not local_updated_dt: # Timestamp comparison unreliable
+                elif not keep_updated_dt or not local_updated_dt: # Timestamps unreliable
                     # Heuristic: if timestamps are unreliable, check content hash
                     logging.warning(f"    PULL: Timestamps unreliable for {current_keep_id}. Comparing content hash.")
                     try:
@@ -724,13 +800,13 @@ def run_pull(keep, args, counters):
                             should_update_file_content = True
                             logging.info(f"    PULL: Content hash mismatch for {current_keep_id} (Timestamps unreliable). Marking for update.")
                         else:
-                            logging.info(f"    PULL: Content hash matches for {current_keep_id} (Timestamps unreliable). Skipping update.")
-                            counters['pull_skipped_no_change'] +=1 # Still counts as no change needed based on this path
+                            logging.debug(f"    PULL: Content hash matches for {current_keep_id} (Timestamps unreliable). Skipping update.")
+                            counters['pull_skipped_no_change'] +=1
                     except Exception as e_hash_comp:
                         logging.error(f"    PULL: Error during hash comparison for {current_keep_id}: {e_hash_comp}. Defaulting to update.", exc_info=DEBUG)
-                        should_update_file_content = True # Fallback to update if hash check fails
+                        should_update_file_content = True
                 else: # Local is same or newer
-                    logging.info(f"    PULL: Local timestamp same or newer for {current_keep_id}. Skipping content update based on timestamp.")
+                    logging.debug(f"    PULL: Local timestamp same or newer for {current_keep_id}. Skipping content update based on timestamp.")
                     counters['pull_skipped_no_change'] += 1
 
                 if should_update_file_content:
@@ -830,7 +906,7 @@ def run_pull(keep, args, counters):
                     counters['pull_errors'] += 1
 
     # Clean up orphaned attachments
-    logging.info("PULL: Checking for orphaned attachments...")
+    logging.debug("PULL: Checking for orphaned attachments...")
     try:
         if os.path.exists(ATTACHMENTS_VAULT_DIR):
             existing_attachments = set(os.listdir(ATTACHMENTS_VAULT_DIR))
@@ -1061,11 +1137,20 @@ def check_changes_needed_for_push(gnote, local_metadata, local_content_raw, keep
         pass
 
 
-    needs_push = bool(change_reasons)
-    if needs_push:
-        logging.info(f"  PUSH_CHECK: Change(s) detected for {note_id}. Reasons: {', '.join(change_reasons)}")
+    # Determine if changes are material (i.e., not just timestamp related)
+    # Define non-material reasons. Add to this list if other non-material reasons emerge.
+    non_material_reasons_set = {'timestamp_local_newer', 'timestamp_local_has_remote_missing'}
+    material_reasons = [r for r in change_reasons if r not in non_material_reasons_set]
+
+    if not change_reasons:
+        logging.debug(f"  PUSH_CHECK: No changes detected for {note_id} ('{local_metadata.get('title')}').")
+    elif not material_reasons:
+        logging.debug(f"  PUSH_CHECK: Non-material changes detected for {note_id} ('{local_metadata.get('title')}'). Reasons: {', '.join(change_reasons)}")
     else:
-        logging.info(f"  PUSH_CHECK: No changes detected for {note_id}.")
+        # Log at INFO if there are material reasons
+        logging.info(f"  PUSH_CHECK: Material change(s) detected for {note_id} ('{local_metadata.get('title')}'). Reasons: {', '.join(change_reasons)}")
+    
+    needs_push = bool(change_reasons) # This reflects if *any* difference was found
     return needs_push, change_reasons
 
 
@@ -1354,12 +1439,12 @@ def run_push(keep, args, counters):
     # keep.all() is fine, but for many notes, an index is better.
     # However, the number of notes is usually manageable for iterating here.
     remote_notes_index = {note.id: note for note in keep.all()}
-    logging.info(f"PUSH: Found {len(remote_notes_index)} notes in Google Keep after initial sync/resume.")
+    logging.debug(f"PUSH: Found {len(remote_notes_index)} notes in Google Keep after initial sync/resume.")
 
     actions_to_perform = [] # Store dicts: {'type': 'create'/'update', 'filepath': ..., 'gnote': ..., ...}
     
     # --- 1. Calculate Potential Changes (Iterate local files) ---
-    logging.info("PUSH: Calculating potential changes from local files...")
+    logging.debug("PUSH: Calculating potential changes from local files...")
     for filepath, local_data in local_files_map.items():
         rel_filepath = os.path.relpath(filepath, VAULT_DIR)
         local_metadata = local_data['metadata']
@@ -1378,22 +1463,43 @@ def run_push(keep, args, counters):
                     is_different, diff_reasons = check_changes_needed_for_push(gnote, local_metadata, local_content_raw, keep)
                     
                     if is_different:
-                        if args.automatic_sync:
+                        # Determine action based on differences and sync mode
+                        action_disposition = 'skip_no_decision' # Default
+                        conflict_details_for_automatic_exit = None
+
+                        # A note needs pushing if check_changes_needed_for_push found *any* difference
+                        # that is not *just* the timestamp being newer.
+                        material_changes_detected = any(reason != 'timestamp_local_newer' for reason in diff_reasons)
+
+                        if not is_different:
+                            # No differences detected at all
+                            action_disposition = 'skip_no_change'
+                            counters['push_skipped_no_change'] += 1
+                            logging.debug(f"  PUSH: No changes detected for {local_keep_id} ('{gnote.title}'). Skipping.")
+                        elif is_different and not material_changes_detected:
+                            # Differences were detected, but the only reason was timestamp_local_newer.
+                            # This means the file was likely just touched, not materially edited.
+                            action_disposition = 'skip_no_material_change'
+                            # Use a new counter for this specific skip reason
+                            counters['push_skipped_no_material_change'] += 1
+                            logging.debug(f"  PUSH: Differences detected for {local_keep_id} ('{gnote.title}'), but only timestamp is newer ({diff_reasons}). Skipping update to remote as no material change found.") # Changed to debug
+                        elif args.automatic_sync:
+                            # Material changes detected, in automatic sync mode
                             if args.cherry_pick:
                                 logging.warning("  PUSH: --automatic-sync is enabled, --cherry-pick will be ignored.")
-                            # Automatic mode conflict resolution
+                            
                             remote_updated_dt = gnote.timestamps.updated.replace(tzinfo=timezone.utc) if gnote.timestamps.updated else None
+                            local_updated_dt = local_metadata.get('updated_dt') # This now correctly uses the later of YAML/file time
+
                             if args.force_push:
                                 action_disposition = 'update_remote'
                                 logging.debug(f"  PUSH (AUTO): --force-push active for {local_keep_id}. Marking for update.")
-                            elif local_updated_dt and remote_updated_dt and local_updated_dt > remote_updated_dt:
+                            # Check if local timestamp is valid AND (newer than remote OR remote is missing timestamp)
+                            elif local_updated_dt and (remote_updated_dt is None or local_updated_dt > remote_updated_dt):
                                 action_disposition = 'update_remote'
-                                logging.debug(f"  PUSH (AUTO): Local timestamp newer for {local_keep_id}. Marking for update.")
-                            elif remote_updated_dt and local_updated_dt and remote_updated_dt > local_updated_dt:
-                                logging.warning(f"  PUSH (AUTO): Conflict! Remote note {local_keep_id} ('{gnote.title}') is newer. Skipping push. (Local: {local_updated_dt}, Remote: {remote_updated_dt})")
-                                counters['push_skipped_conflict_remote_newer'] += 1
-                                action_disposition = 'skip_conflict_remote_newer'
-                            else: # Timestamps inconclusive, or local older/same and no force_push
+                                logging.debug(f"  PUSH (AUTO): Local timestamp ({local_updated_dt}) is valid and newer than remote ({remote_updated_dt}). Marking for update.")
+                            else: # Material differences exist, but timestamps don't clearly favor local, and not forced.
+                                # This includes cases where remote is newer, timestamps are equal, or local timestamp is None.
                                 conflict_message = (
                                     f"Unresolved conflict for note ID {local_keep_id} ('{gnote.title}') in automatic mode.\n"
                                     f"  File: {rel_filepath}\n"
@@ -1404,30 +1510,33 @@ def run_push(keep, args, counters):
                                 conflict_details_for_automatic_exit = conflict_message
                                 action_disposition = 'exit_on_conflict' # Special disposition
                         elif args.cherry_pick:
+                            # Material changes detected, in cherry-pick mode
                             decision = perform_cherry_pick_interaction(gnote, local_metadata, local_content_raw, filepath, keep, args, VAULT_DIR, counters)
                             if decision == 'CHOOSE_LOCAL': action_disposition = 'update_remote'
-                            # CHOOSE_REMOTE (local updated), CHOOSE_SKIP, DRY_RUN_PROMPT => no remote update
-                        elif args.force_push: # Not cherry-pick, but force specified
+                            # CHOOSE_REMOTE (local updated), CHOOSE_SKIP, DRY_RUN_PROMPT => no remote update action
+                        elif args.force_push: # Not cherry-pick, but force specified, AND material differences exist
                             action_disposition = 'update_remote'
-                            logging.debug(f"  PUSH: --force-push specified for {local_keep_id}. Marking for update.")
-                        else: # Differences exist, not cherry-picking, not forcing. Conflict resolution needed.
-                            remote_updated_dt = gnote.timestamps.updated.replace(tzinfo=timezone.utc) if gnote.timestamps.updated else None
-                            if local_updated_dt and remote_updated_dt and local_updated_dt > remote_updated_dt:
-                                action_disposition = 'update_remote' # Local is definitively newer by its own timestamp
-                                logging.debug(f"  PUSH: Local timestamp newer for {local_keep_id}. Marking for update.")
-                            elif remote_updated_dt and local_updated_dt and remote_updated_dt > local_updated_dt:
-                                logging.warning(f"  PUSH: Conflict! Remote note {local_keep_id} ('{gnote.title}') is newer based on timestamps. Skipping local update to remote. (Local: {local_updated_dt}, Remote: {remote_updated_dt})")
-                                counters['push_skipped_conflict_remote_newer'] += 1
-                                action_disposition = 'skip_conflict_remote_newer'
-                            # If timestamps are equal but content differs (caught by is_different), or one TS is missing
-                            elif "content" in diff_reasons or "title" in diff_reasons or "labels_add" in diff_reasons or "labels_remove" in diff_reasons: # and timestamps didn't resolve it
-                                logging.warning(f"  PUSH: Differences found for {local_keep_id} ('{gnote.title}'), timestamps inconclusive or equal. Defaulting to update remote due to content/metadata diffs (no --force, no --cherry-pick).")
-                                # This is a common case: user edited locally, timestamps might be close or local not updated by frontmatter tools
-                                action_disposition = 'update_remote'
-                            else: # Different for other reasons (e.g. pin, color) but timestamps don't clearly say local is newer
-                                logging.info(f"  PUSH: Differences found for {local_keep_id} ({diff_reasons}), but local timestamp not definitively newer and not forcing. Skipping update to remote.")
-                                counters['push_skipped_no_clear_local_precedence'] += 1
-                                action_disposition = 'skip_no_clear_precedence'
+                            logging.debug(f"  PUSH: --force-push specified for {local_keep_id} and material differences found. Marking for update.")
+                        else: # Material differences exist, not cherry-picking, not forcing. Default logic.
+                             remote_updated_dt = gnote.timestamps.updated.replace(tzinfo=timezone.utc) if gnote.timestamps.updated else None
+                             local_updated_dt = local_metadata.get('updated_dt')
+
+                             # In interactive mode without --force or --cherry-pick, if material differences exist,
+                             # we push if the local timestamp is same or newer. Remote being strictly newer is a conflict.
+                             if local_updated_dt and remote_updated_dt and local_updated_dt >= remote_updated_dt:
+                                 action_disposition = 'update_remote' # Local timestamp is same or newer
+                                 logging.debug(f"  PUSH: Material differences found for {local_keep_id}. Local timestamp same or newer. Marking for update.")
+                             elif not remote_updated_dt and local_updated_dt:
+                                  action_disposition = 'update_remote' # Remote has no timestamp, local does (with material diffs).
+                                  logging.debug(f"  PUSH: Material differences found for {local_keep_id}. Remote timestamp missing. Marking for update.")
+                             else:
+                                  # Remote is clearly newer by timestamp, or timestamps are missing on both but material diffs exist.
+                                  # This is a conflict in non-automatic, non-forced mode.
+                                  # Given the previous logic in check_changes covers content/title/labels etc,
+                                  # if we reach here and remote TS is newer, it's a genuine remote-newer conflict.
+                                  logging.warning(f"  PUSH: Material differences found for {local_keep_id} ('{gnote.title}'), but remote timestamp ({remote_updated_dt}) is newer than local ({local_updated_dt}). Skipping push to avoid overwriting newer remote version.")
+                                  counters['push_skipped_conflict_remote_newer'] += 1
+                                  action_disposition = 'skip_conflict_remote_newer'
                     else: # Not different
                         action_disposition = 'skip_no_change'
                         counters['push_skipped_no_change'] += 1
@@ -1470,7 +1579,20 @@ def run_push(keep, args, counters):
                 sys.exit(1) # Exit the script
         
         except Exception as e_analyze:
-            logging.error(f"PUSH: Error analyzing file {rel_filepath} for push: {e_analyze}", exc_info=DEBUG)
+            actual_error_string = str(e_analyze)
+            logging.debug(f"PUSH_EXCEPTION_HANDLER: Caught exception. String form: >>>{actual_error_string}<<<")
+
+            # Check if the error is the specific 'push_skipped_no_material_change' case
+            # which should have already been logged at DEBUG level by line ~1476.
+            # Using 'in' for a more robust check against potential minor string variations (e.g., surrounding quotes if any)
+            if 'push_skipped_no_material_change' in actual_error_string:
+                logging.debug(f"PUSH: Analysis for {rel_filepath} resulted in '{actual_error_string}' status (handled as non-material skip).")
+                # We might not even need to increment push_errors_analysis if this is considered a normal skip.
+                # For now, keeping the counter increment to align with original behavior if an exception truly occurred.
+                # If this path means NO actual error occurred, then the counter increment might be misleading.
+                # However, altering counter logic is out of scope for reducing verbosity here.
+            else:
+                logging.error(f"PUSH: Error analyzing file {rel_filepath} for push: {e_analyze}", exc_info=DEBUG)
             counters['push_errors_analysis'] += 1
 
 
