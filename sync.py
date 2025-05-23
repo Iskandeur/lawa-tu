@@ -23,6 +23,12 @@ import requests
 import mimetypes
 import shutil
 import glob
+import tarfile # Though not directly used in sync.py, good to have if considering direct tar ops here
+from datetime import timedelta # Already has datetime
+# import json # Already present
+# os, logging, sys, argparse, etc. are already present
+import backup_utils # For the newly created backup functions
+
 
 # --- Logging Setup ---
 LOG_FILE = 'debug_sync.log'
@@ -74,6 +80,13 @@ RESERVED_NAMES = {
 # --- Sync Log Constants ---
 SYNC_LOG_FILENAME = "_Sync_Log.md"
 SYNC_LOG_TITLE = "Sync Log"
+
+# --- Backup Constants ---
+BACKUP_DIR = "backups"
+MAX_BACKUPS = 5
+BACKUP_INTERVAL_DAYS = 7
+BACKUP_SYNC_COUNT_TRIGGER = 10
+BACKUP_STATE_FILE = "backup_state.json"
 
 
 # --- UTF-8 Reconfiguration for stdout/stderr ---
@@ -179,6 +192,30 @@ def save_cached_state(keep):
         logging.info(f"Saved state to {CACHE_FILE} for faster future syncs.")
     except Exception as e:
         logging.warning(f"Could not save state to cache file: {e}", exc_info=DEBUG)
+
+def load_backup_state():
+    if os.path.exists(BACKUP_STATE_FILE):
+        try:
+            with open(BACKUP_STATE_FILE, 'r', encoding='utf-8') as f:
+                logging.info(f"Loading backup state from {BACKUP_STATE_FILE}...")
+                state = json.load(f)
+                # Basic validation
+                if 'last_backup_time' in state and 'sync_count_since_last_backup' in state:
+                    return state
+                else:
+                    logging.warning(f"Backup state file {BACKUP_STATE_FILE} is missing expected keys. Initializing fresh.")
+                    return {'last_backup_time': datetime.min.isoformat(), 'sync_count_since_last_backup': 0}
+        except (json.JSONDecodeError, IOError) as e:
+            logging.warning(f"Error loading backup state from {BACKUP_STATE_FILE}: {e}. Initializing fresh state.", exc_info=DEBUG)
+    return {'last_backup_time': datetime.min.isoformat(), 'sync_count_since_last_backup': 0}
+
+def save_backup_state(state):
+    try:
+        with open(BACKUP_STATE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(state, f, indent=2)
+        logging.info(f"Saved backup state to {BACKUP_STATE_FILE}.")
+    except IOError as e:
+        logging.warning(f"Could not save backup state to {BACKUP_STATE_FILE}: {e}", exc_info=DEBUG)
 
 # --- Markdown Processing ---
 def escape_hashtags(text):
@@ -2103,6 +2140,79 @@ def main():
     # Ensure vault structure exists before any operations that might need it
     create_vault_structure(VAULT_DIR)
     logging.debug(f"Ensured vault directory structure exists at: {VAULT_DIR}")
+
+    # --- Backup Logic ---
+    if not args.dry_run: # Don't perform backup operations or update state in dry run
+        backup_state = load_backup_state()
+        last_backup_time_str = backup_state.get('last_backup_time')
+        sync_count = backup_state.get('sync_count_since_last_backup', 0)
+
+        sync_count += 1
+        logging.info(f"Current sync count since last backup: {sync_count}")
+
+        backup_needed_by_time = False
+        backup_needed_by_count = (sync_count >= BACKUP_SYNC_COUNT_TRIGGER)
+
+        try:
+            last_backup_time_dt = datetime.fromisoformat(last_backup_time_str)
+            # If naive, try to localize it to UTC if LOCAL_TZ is not available, or make it aware based on LOCAL_TZ then convert to UTC
+            if last_backup_time_dt.tzinfo is None or last_backup_time_dt.tzinfo.utcoffset(last_backup_time_dt) is None: # Check if naive
+                if LOCAL_TZ: # LOCAL_TZ is defined in sync.py
+                    last_backup_time_dt = LOCAL_TZ.localize(last_backup_time_dt).astimezone(timezone.utc)
+                else: # Assume UTC if no local timezone info
+                    last_backup_time_dt = last_backup_time_dt.replace(tzinfo=timezone.utc)
+            else: # Already aware, ensure it's UTC
+                 last_backup_time_dt = last_backup_time_dt.astimezone(timezone.utc)
+
+            # Ensure current_time is aware (it is, as sync_start_time is aware UTC)
+            current_time_utc = sync_start_time # sync_start_time is already defined as datetime.now(timezone.utc)
+            
+            # Handle datetime.min.isoformat() which results in a naive datetime.min
+            # datetime.min.replace(tzinfo=timezone.utc) is the correct comparison target
+            min_utc_aware = datetime.min.replace(tzinfo=timezone.utc)
+
+            if last_backup_time_dt == min_utc_aware: 
+                logging.info("First sync or backup state initialized; considering backup by time.")
+                backup_needed_by_time = True # Trigger backup if it's the very first time
+            else:
+                time_since_last_backup = current_time_utc - last_backup_time_dt
+                if time_since_last_backup >= timedelta(days=BACKUP_INTERVAL_DAYS): # Compare timedelta directly
+                    backup_needed_by_time = True
+        except ValueError as e_ts:
+            logging.warning(f"Could not parse last_backup_time '{last_backup_time_str}': {e_ts}. Assuming backup is needed by time.")
+            backup_needed_by_time = True # If timestamp is invalid, better to err on the side of backing up
+        except Exception as e_gen_ts: # Catch any other unexpected errors during timestamp processing
+            logging.error(f"Unexpected error processing backup timestamps: {e_gen_ts}", exc_info=DEBUG)
+            backup_needed_by_time = True
+
+
+        if backup_needed_by_time or backup_needed_by_count:
+            logging.info(f"Backup condition met. Needed by time: {backup_needed_by_time}, Needed by count: {backup_needed_by_count}. Starting backup process...")
+            try:
+                os.makedirs(BACKUP_DIR, exist_ok=True)
+                backup_file_path = backup_utils.create_backup(VAULT_DIR, BACKUP_DIR)
+                if backup_file_path:
+                    logging.info(f"Successfully created backup: {backup_file_path}")
+                    backup_utils.manage_backups(BACKUP_DIR, MAX_BACKUPS)
+                    backup_state['last_backup_time'] = current_time_utc.isoformat()
+                    backup_state['sync_count_since_last_backup'] = 0 # Reset count
+                    logging.info(f"Backup successful. Last backup time updated to {backup_state['last_backup_time']}, sync count reset.")
+                else:
+                    logging.error("Backup creation failed (backup_utils.create_backup returned None).")
+                    # Do not reset sync_count or update last_backup_time if backup failed
+                    backup_state['sync_count_since_last_backup'] = sync_count # Keep incremented count
+            except Exception as e_backup:
+                logging.error(f"An error occurred during the backup process: {e_backup}", exc_info=DEBUG)
+                # Do not reset sync_count or update last_backup_time if backup failed
+                backup_state['sync_count_since_last_backup'] = sync_count # Keep incremented count
+        else:
+            logging.info("Backup conditions not met (time or sync count). Skipping backup.")
+            backup_state['sync_count_since_last_backup'] = sync_count # Save incremented count
+        
+        save_backup_state(backup_state)
+    else:
+        logging.info("[Dry Run] Skipping backup logic and backup state update.")
+    # --- End Backup Logic ---
 
     # --- Run PULL Operation ---
     if not args.skip_pull:

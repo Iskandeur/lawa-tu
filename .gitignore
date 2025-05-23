@@ -20,3 +20,7 @@ vault_backups/
 .venv/
 .cursor/
 .obsidian/
+
+# Backup files and state
+backups/
+backup_state.json

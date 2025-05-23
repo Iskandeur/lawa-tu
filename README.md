@@ -130,6 +130,38 @@ Run the scripts from your terminal in the project directory.
 *   `README.md`: This file.
 *   `requirements.txt`: Python dependencies.
 
+## Backup Feature
+
+The script now includes an automatic backup feature for the `KeepVault/` directory to provide a safety net against accidental data loss or synchronization issues.
+
+**How Backups are Triggered:**
+
+Backups are created automatically based on the following conditions, whichever comes first:
+*   **Time-based:** A backup is made if 7 days have passed since the last backup.
+*   **Count-based:** A backup is made if 10 sync operations have been performed since the last backup.
+
+**Backup Storage and Format:**
+
+*   **Location:** Backups are stored in a new folder named `backups/` at the root of the repository.
+*   **Format:** Each backup is a timestamped `.tar.gz` archive of the entire `KeepVault/` directory (e.g., `backup_YYYYMMDD_HHMMSS.tar.gz`).
+
+**Rolling Window and Retention:**
+
+*   A maximum of 5 backups are kept.
+*   When a new backup is created and this limit is exceeded, the oldest backup archive is automatically deleted.
+
+**Configuration:**
+
+*   The core backup settings (backup interval, sync count trigger, maximum number of backups to keep) are currently defined as constants at the beginning of the `sync.py` script. Advanced users can modify these constants directly in the script if needed.
+
+**State Tracking:**
+
+*   The script uses a `backup_state.json` file (stored at the root of the repository) to keep track of the timestamp of the last successful backup and the number of sync operations performed since then.
+
+**Important Note for Git Users:**
+
+*   The `backups/` directory and the `backup_state.json` file are automatically included in the `.gitignore` file. This is intentional to prevent committing large backup archives and local state information to your Git repository.
+
 ## Synchronization Logic Details
 
 The synchronization process is divided into two main phases: Pull (Keep -> Local) and Push (Local -> Keep).
