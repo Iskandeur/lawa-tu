@@ -2152,6 +2152,12 @@ def main():
 
         backup_needed_by_time = False
         backup_needed_by_count = (sync_count >= BACKUP_SYNC_COUNT_TRIGGER)
+        
+        # For automatic sync mode, be more conservative with backups
+        if args.automatic_sync:
+            # In automatic sync mode, only backup based on time (weekly) or higher sync count threshold
+            backup_needed_by_count = (sync_count >= BACKUP_SYNC_COUNT_TRIGGER * 2)  # Double the threshold for auto-sync
+            logging.info(f"Automatic sync mode: Using higher sync count threshold ({BACKUP_SYNC_COUNT_TRIGGER * 2}) for backups")
 
         try:
             last_backup_time_dt = datetime.fromisoformat(last_backup_time_str)
@@ -2173,17 +2179,28 @@ def main():
 
             if last_backup_time_dt == min_utc_aware: 
                 logging.info("First sync or backup state initialized; considering backup by time.")
-                backup_needed_by_time = True # Trigger backup if it's the very first time
+                # Only trigger backup on first run if not in automatic sync mode, or if sync count is very high
+                if not args.automatic_sync or sync_count >= BACKUP_SYNC_COUNT_TRIGGER:
+                    backup_needed_by_time = True
+                else:
+                    logging.info("Automatic sync mode: Skipping first-time backup, will backup based on normal schedule")
             else:
                 time_since_last_backup = current_time_utc - last_backup_time_dt
                 if time_since_last_backup >= timedelta(days=BACKUP_INTERVAL_DAYS): # Compare timedelta directly
                     backup_needed_by_time = True
         except ValueError as e_ts:
             logging.warning(f"Could not parse last_backup_time '{last_backup_time_str}': {e_ts}. Assuming backup is needed by time.")
-            backup_needed_by_time = True # If timestamp is invalid, better to err on the side of backing up
+            # In automatic sync mode, be more conservative about backup on parse errors
+            if not args.automatic_sync:
+                backup_needed_by_time = True # If timestamp is invalid, better to err on the side of backing up
+            else:
+                logging.info("Automatic sync mode: Not triggering backup due to timestamp parse error, will rely on sync count")
         except Exception as e_gen_ts: # Catch any other unexpected errors during timestamp processing
             logging.error(f"Unexpected error processing backup timestamps: {e_gen_ts}", exc_info=DEBUG)
-            backup_needed_by_time = True
+            if not args.automatic_sync:
+                backup_needed_by_time = True
+            else:
+                logging.info("Automatic sync mode: Not triggering backup due to timestamp processing error")
 
 
         if backup_needed_by_time or backup_needed_by_count:
@@ -2197,19 +2214,22 @@ def main():
                     backup_state['last_backup_time'] = current_time_utc.isoformat()
                     backup_state['sync_count_since_last_backup'] = 0 # Reset count
                     logging.info(f"Backup successful. Last backup time updated to {backup_state['last_backup_time']}, sync count reset.")
+                    # Immediately save the updated backup state to ensure it persists
+                    save_backup_state(backup_state)
                 else:
                     logging.error("Backup creation failed (backup_utils.create_backup returned None).")
                     # Do not reset sync_count or update last_backup_time if backup failed
                     backup_state['sync_count_since_last_backup'] = sync_count # Keep incremented count
+                    save_backup_state(backup_state)
             except Exception as e_backup:
                 logging.error(f"An error occurred during the backup process: {e_backup}", exc_info=DEBUG)
                 # Do not reset sync_count or update last_backup_time if backup failed
                 backup_state['sync_count_since_last_backup'] = sync_count # Keep incremented count
+                save_backup_state(backup_state)
         else:
             logging.info("Backup conditions not met (time or sync count). Skipping backup.")
             backup_state['sync_count_since_last_backup'] = sync_count # Save incremented count
-        
-        save_backup_state(backup_state)
+            save_backup_state(backup_state)
     else:
         logging.info("[Dry Run] Skipping backup logic and backup state update.")
     # --- End Backup Logic ---
