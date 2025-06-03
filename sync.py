@@ -929,6 +929,53 @@ def run_pull(keep, args, counters):
 
     # Clean up orphaned local notes
     orphaned_ids = set(local_notes_index.keys()) - processed_keep_ids_from_remote
+    
+    # NEW LOGIC: Handle notes that exist remotely but were deleted locally (not in trash)
+    # Check for remote notes that don't have corresponding local files
+    remote_ids = {note.id for note in keep.all() if note.title != SYNC_LOG_TITLE}
+    local_ids = set(local_notes_index.keys())
+    remote_only_ids = remote_ids - local_ids
+    
+    if remote_only_ids:
+        logging.info(f"\nFound {len(remote_only_ids)} remote notes that don't exist locally...")
+        remote_notes_to_trash = []
+        
+        for remote_id in remote_only_ids:
+            # Find the remote note object
+            remote_note = None
+            for note in keep.all():
+                if note.id == remote_id:
+                    remote_note = note
+                    break
+            
+            if remote_note and not remote_note.trashed:
+                # This remote note exists but has no local counterpart and is not already trashed
+                # This means it was likely deleted locally, so we should trash it remotely
+                remote_notes_to_trash.append(remote_note)
+                logging.info(f"  PULL: Remote note '{remote_note.title}' (ID: {remote_id}) will be moved to trash (deleted locally)")
+        
+        if remote_notes_to_trash:
+            logging.info(f"Moving {len(remote_notes_to_trash)} remote notes to trash...")
+            
+            for note_to_trash in remote_notes_to_trash:
+                try:
+                    note_to_trash.trash()
+                    counters['pull_trashed_remote_deleted_locally'] = counters.get('pull_trashed_remote_deleted_locally', 0) + 1
+                    logging.info(f"  PULL: Moved remote note '{note_to_trash.title}' (ID: {note_to_trash.id}) to trash")
+                except Exception as e_trash:
+                    logging.error(f"  PULL: Error trashing remote note {note_to_trash.id}: {e_trash}", exc_info=DEBUG)
+                    counters['pull_errors'] += 1
+            
+            # Sync the changes to Keep
+            try:
+                logging.info("PULL: Syncing trash changes to Google Keep...")
+                keep.sync()
+                save_cached_state(keep)
+                logging.info("PULL: Sync after trash operations complete.")
+            except Exception as e_sync_trash:
+                logging.error(f"PULL: Error syncing trash changes: {e_sync_trash}", exc_info=DEBUG)
+                counters['pull_errors'] += 1
+    
     if orphaned_ids:
         logging.info(f"\nFound {len(orphaned_ids)} local notes not in Keep. Deleting local files...")
         for orphan_id in orphaned_ids:
@@ -1851,6 +1898,8 @@ def update_sync_log_note(keep, counters, vault_dir, sync_start_time_iso, args):
         summary_parts.append(f"  Local files moved/renamed: {counters['pull_moved_local']}")
         summary_parts.append(f"  Orphaned local notes deleted: {counters['pull_deleted_local_orphan']}")
         summary_parts.append(f"  Orphaned local attachments deleted: {counters['pull_deleted_orphaned_attachments']}")
+        if counters.get('pull_trashed_remote_deleted_locally', 0) > 0:
+            summary_parts.append(f"  Remote notes moved to trash (deleted locally): {counters['pull_trashed_remote_deleted_locally']}")
         summary_parts.append(f"  Empty remote notes skipped: {counters['pull_skipped_empty']}")
         if counters['pull_errors'] > 0:
             summary_parts.append(f"  Errors during pull: {counters['pull_errors']}")
@@ -2125,6 +2174,7 @@ def main():
         'pull_created_local': 0, 'pull_updated_local': 0, 'pull_skipped_no_change':0,
         'pull_moved_local': 0, 'pull_deleted_local_orphan': 0, 'pull_skipped_empty': 0,
         'pull_errors': 0, 'pull_deleted_orphaned_attachments':0,
+        'pull_trashed_remote_deleted_locally': 0,
         
         'push_created_remote': 0, 'push_updated_remote': 0,
         'push_skipped_no_change': 0, 'push_skipped_conflict_remote_newer': 0,
@@ -2267,6 +2317,8 @@ def main():
         print(f"  Local files moved/renamed: {counters['pull_moved_local']}")
         print(f"  Orphaned local notes deleted: {counters['pull_deleted_local_orphan']}")
         print(f"  Orphaned local attachments deleted: {counters['pull_deleted_orphaned_attachments']}")
+        if counters.get('pull_trashed_remote_deleted_locally', 0) > 0:
+            print(f"  Remote notes moved to trash (deleted locally): {counters['pull_trashed_remote_deleted_locally']}")
         print(f"  Empty remote notes skipped: {counters['pull_skipped_empty']}")
         if counters['pull_errors'] > 0: print(f"  Errors during pull: {counters['pull_errors']}")
     
