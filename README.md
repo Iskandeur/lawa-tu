@@ -125,8 +125,9 @@ Run the scripts from your terminal in the project directory.
     *   Push changes from your Obsidian vault back to Google Keep.
     *   **Automatically update the sync log** with operation summary.
 4.  **Clean up Single-Use Tags:** Run `python tools/tag_cleanup/remove_single_use_tags.py` to remove tags that are only used in a single note.
+5.  **Archive Connected Notes:** Run `python tools/archive_connected_notes.py` to automatically archive notes that have connections (outgoing or incoming `[[]]` links).
 
-*Repeat steps 2-4 as needed.*
+*Repeat steps 2-5 as needed.*
 
 ## File Structure
 
@@ -137,6 +138,7 @@ Run the scripts from your terminal in the project directory.
 *   `KeepVault/_Sync_Log.md`: **Automatic sync log note** with history of all sync operations.
 *   `sync.py`: Main script for two-way synchronization.
 *   `tools/tag_cleanup/remove_single_use_tags.py`: Script to clean up tags that are only used in one note.
+*   `tools/archive_connected_notes.py`: Script to automatically archive notes that have connections (outgoing or incoming `[[]]` links).
 *   `backup_utils.py`: Utility functions for backup operations.
 *   `keep_state.json`: Cache file storing state from Google Keep to speed up syncs. Can be deleted to force a full refresh (`--full-sync`).
 *   `backup_state.json`: Tracks backup timing and sync count for automatic backup feature.
@@ -163,6 +165,42 @@ The script automatically creates and maintains a sync log to track all synchroni
 **Sync Log Location:**
 *   **Local:** `KeepVault/_Sync_Log.md`
 *   **Remote:** "Sync Log" note in Google Keep (pinned)
+
+## Archive Connected Notes Feature
+
+The project includes a utility script to automatically archive notes that are part of your knowledge graph (have connections to other notes).
+
+**Key Features:**
+*   **Comprehensive Link Detection:** Scans all markdown files for Obsidian-style `[[]]` links
+*   **Intelligent Link Resolution:** Matches links using:
+    *   Direct filename matching (`[[filename]]` → `filename.md`)
+    *   YAML title matching (`[[Note Title]]` → file with `title: "Note Title"`)
+    *   Case-insensitive matching for better compatibility
+*   **Bidirectional Connection Tracking:** Identifies notes with both outgoing links (notes that link to others) and incoming links (notes that are referenced by others)
+*   **Active Note Focus:** Only processes notes that are not already archived or trashed
+*   **Safe Operation:** Shows preview of what will be changed and asks for confirmation
+
+**Usage:**
+```bash
+python tools/archive_connected_notes.py
+```
+
+**How it Works:**
+1. **Discovery Phase:** Scans all `.md` files in the vault (including `Archived/` and `Trashed/` folders)
+2. **Link Resolution:** Builds a complete map of all `[[]]` links and their targets
+3. **Connection Analysis:** Identifies which notes have connections (either as source or target of links)
+4. **Archive Candidates:** Filters to show only active notes that would be archived
+5. **Preview & Confirmation:** Shows exactly which notes will be affected before making changes
+6. **Safe Execution:** Updates only the `archived: true` field in YAML frontmatter
+
+**Example Output:**
+```
+Found 875 total notes in the vault
+Found 478 notes with connections (outgoing or incoming links)
+Found 37 ACTIVE notes that need to be archived
+```
+
+This helps maintain a clean active workspace by automatically archiving notes that are part of your connected knowledge while preserving standalone notes for easy access.
 
 ## Title and H1 Handling Logic
 

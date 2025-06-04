@@ -10,6 +10,13 @@ All notable changes to the Google Keep <=> Obsidian sync project will be documen
   - Available in both local vault and Google Keep (pinned)
   - Updates automatically after each sync operation
 
+- **Archive Connected Notes Script**: Enhanced `tools/archive_connected_notes.py` for knowledge graph management
+  - Comprehensive detection of `[[]]` links across all vault files
+  - Intelligent link resolution (filename, YAML title, case-insensitive matching)
+  - Bidirectional connection tracking (outgoing and incoming links)
+  - Safe operation with preview and confirmation
+  - Focus on active notes only (excludes already archived/trashed)
+
 - **Enhanced Title/H1 Handling Logic**:
   - H1 headers are now ALWAYS preserved in content (no longer extracted as title)
   - Smart filename-to-title logic with special handling for "Untitled_[ID]" pattern files
@@ -49,6 +56,10 @@ All notable changes to the Google Keep <=> Obsidian sync project will be documen
 - **H1 Duplication Issue**: Script no longer creates duplicate H1 headers matching YAML titles
 - **Frontmatter Completeness**: New notes now get all required fields immediately after creation
 - **File Path Corrections**: Updated documentation to reflect actual script locations
+- **Archive Connected Notes Bug**: Fixed link detection that was previously missing backlinks
+  - Script now processes all files (including archived/trashed) to build complete connection graph
+  - Properly resolves links using multiple matching strategies
+  - Correctly identifies notes with incoming connections (backlinks)
 
 ### Technical Improvements
 - Enhanced error handling and logging
