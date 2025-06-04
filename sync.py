@@ -1111,19 +1111,21 @@ def check_changes_needed_for_push(gnote, local_metadata, local_content_raw, keep
     temp_local_content = local_content_raw.lstrip()
     current_local_title_for_push = local_title_from_yaml # Start with YAML title
 
+    # Modified H1 logic: If YAML title is empty, use filename as title and KEEP h1 in content
     h1_match = re.match(r'^#\s+(.*?)\r?\n', temp_local_content, re.MULTILINE)
     if h1_match:
         h1_title_content = h1_match.group(1).strip()
-        # If YAML title was empty, use H1 content as title AND remove H1 from content body
+        # If YAML title was empty, we DON'T use H1 content as title anymore
+        # Instead, we should get the filename-based title from somewhere
+        # Since this function doesn't have access to filepath, we keep the YAML title logic
+        # The caller should ensure that if title is empty, it's populated with filename before calling this
         if not current_local_title_for_push:
-            current_local_title_for_push = h1_title_content
-            temp_local_content = temp_local_content[h1_match.end():].lstrip('\r\n')
-            logging.debug(f"    PUSH_CHECK: Used H1 for title ('{current_local_title_for_push}'), H1 removed from content body.")
-        # Else (YAML title exists), H1 in content is part of body, do not remove it from temp_local_content. current_local_title_for_push remains YAML title.
+            # Don't extract h1 as title, keep it in content
+            logging.debug(f"    PUSH_CHECK: H1 found but YAML title empty. H1 will remain in content. Title should be set from filename by caller.")
+        # In all cases, we no longer remove H1 from content automatically
     
     # Ensure title is at least empty string if still None after H1 logic
     if current_local_title_for_push is None: current_local_title_for_push = ""
-
 
     lines_before_attachments = []
     found_attachments_header = False
@@ -1255,13 +1257,14 @@ def update_gnote_from_local_data(gnote, local_metadata, local_content_raw, keep_
     content_to_push = local_content_raw.lstrip()
     title_to_push = local_title_from_yaml
 
+    # Modified H1 logic: Don't extract h1 as title anymore, keep h1 in content
     h1_match = re.match(r'^#\s+(.*?)\r?\n', content_to_push, re.MULTILINE)
     if h1_match:
         h1_title = h1_match.group(1).strip()
         if not title_to_push: # YAML title was empty
-            title_to_push = h1_title
-            content_to_push = content_to_push[h1_match.end():].lstrip('\r\n')
-            logging.debug(f"    PUSH_UPDATE ({note_id}): Using H1 for title ('{title_to_push}'), H1 removed from content.")
+            # Don't use h1 as title anymore, caller should have set title from filename
+            logging.debug(f"    PUSH_UPDATE ({note_id}): H1 found but YAML title empty. H1 will remain in content. Title should be set from filename by caller.")
+        # In all cases, we no longer remove H1 from content automatically
     if title_to_push is None: title_to_push = "" # Ensure not None
 
     lines_before_attachments = []
@@ -1426,29 +1429,17 @@ def create_gnote_from_local_data(keep_instance, local_metadata, local_content_ra
         logging.debug(f"  PUSH_CREATE ({note_id_for_log}): Using filename as title: '{title_for_new_note}'")
     if not title_for_new_note: title_for_new_note = "" # Ensure it's at least an empty string
 
-    # --- Prepare content for new note (Remove H1 if title came from H1, remove attachments section, unescape) ---
+    # --- Prepare content for new note (Remove attachments section, unescape, but KEEP h1) ---
     content_for_new_note = local_content_raw.lstrip()
-    # If title_for_new_note was derived from H1, that H1 should be removed from content.
-    # This is implicitly handled if local_metadata.get('title') was empty and filename was used.
-    # If local_metadata.get('title') was present, H1 in content is body.
-    # If local_metadata.get('title') was empty, AND filename was used, then H1 in content is body.
-    # This needs careful H1 removal only if the H1 was *the source* of the title.
-    # The `title_to_push` logic in `update_gnote` is more robust. Let's adapt.
     
-    # Re-evaluate H1 removal for create:
-    # If YAML title exists, H1 in body is content.
-    # If YAML title is empty, H1 in body becomes title, and is removed from body.
-    # If YAML title is empty AND no H1, title is from filename, body is as-is.
-    
-    temp_title_from_yaml = local_metadata.get('title') # This is the original YAML title
+    # Modified H1 logic: Always keep h1 in content, never extract it as title
+    # The title comes from YAML or filename, not from h1
     h1_match_create = re.match(r'^#\s+(.*?)\r?\n', content_for_new_note, re.MULTILINE)
     if h1_match_create:
         h1_title_candidate = h1_match_create.group(1).strip()
-        if not temp_title_from_yaml: # YAML title was empty
-            title_for_new_note = h1_title_candidate # H1 becomes the title
-            content_for_new_note = content_for_new_note[h1_match_create.end():].lstrip('\r\n') # Remove H1 from body
-            logging.debug(f"  PUSH_CREATE ({note_id_for_log}): Used H1 for new note title ('{title_for_new_note}'), H1 removed from body.")
-    # If title_for_new_note is still from filename (no YAML title, no H1 title), it's already set.
+        # We no longer extract h1 as title, always keep it in content
+        logging.debug(f"  PUSH_CREATE ({note_id_for_log}): H1 found ('{h1_title_candidate}') but keeping it in content. Title is '{title_for_new_note}' from YAML or filename.")
+    # title_for_new_note is already set from YAML or filename
 
     lines_before_attachments = []
     for line in content_for_new_note.split('\n'):
@@ -1535,6 +1526,20 @@ def run_push(keep, args, counters):
         local_content_raw = local_data['content'] # Raw content from MD file
         local_keep_id = local_metadata.get('id')
         local_updated_dt = local_metadata.get('updated_dt') # Parsed datetime
+
+        # Ensure title is set from filename if YAML title is empty
+        if not local_metadata.get('title'):
+            base_fn, _ = os.path.splitext(os.path.basename(filepath))
+            
+            # Check if filename follows the "Untitled_[ID]" pattern - in this case, keep title empty
+            untitled_pattern = re.match(r'^Untitled_[a-f0-9]{11,}\.[a-f0-9]{16}$', base_fn)
+            if untitled_pattern:
+                # Keep title empty for untitled notes with ID-based filenames
+                logging.debug(f"  PUSH: Detected untitled note with ID-based filename '{base_fn}', keeping title empty for cleaner remote display")
+            else:
+                # Use filename as title for other files
+                local_metadata['title'] = base_fn
+                logging.debug(f"  PUSH: YAML title empty for {rel_filepath}, using filename as title: '{base_fn}'")
 
         action_disposition = 'skip_no_decision' # Default
         conflict_details_for_automatic_exit = None
@@ -1816,6 +1821,10 @@ def run_push(keep, args, counters):
                                 else:
                                     updated_yaml_metadata.pop('tags', None)
 
+                                # Ensure archived and trashed status are added to frontmatter for consistency with PULL
+                                updated_yaml_metadata['archived'] = created_gnote.archived
+                                updated_yaml_metadata['trashed'] = created_gnote.trashed
+                                updated_yaml_metadata['pinned'] = created_gnote.pinned
 
                                 new_yaml_string = yaml.dump(updated_yaml_metadata, allow_unicode=True, default_flow_style=False, sort_keys=False)
                                 

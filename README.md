@@ -14,6 +14,7 @@ Notes are converted to Markdown files with YAML frontmatter preserving key metad
         *   Downloads media attachments (images, audio, etc.) associated with notes.
         *   Converts notes into Markdown files (`.md`).
         *   Stores Keep metadata (ID, created/updated timestamps, color, pinned status, archived status, trashed status, labels) in YAML frontmatter.
+        *   **All notes get `archived`, `trashed`, and `pinned` fields** in frontmatter for consistency.
         *   Formats lists with Markdown checkboxes (`- [ ]` or `- [x]`).
         *   Places notes in the appropriate local folder (`KeepVault/`, `KeepVault/Archived/`, `KeepVault/Trashed/`) based on their status in Keep.
         *   Moves local files between these folders if their status changes in Keep.
@@ -21,18 +22,26 @@ Notes are converted to Markdown files with YAML frontmatter preserving key metad
         *   Handles basic filename sanitization (removes invalid characters, keeps spaces).
         *   Uses Keep's `updated` timestamp to only update local files if the remote note is newer (can be overridden with `--force-pull-overwrite`).
         *   Deletes local files ("orphans") corresponding to notes deleted in Keep.
+        *   **Automatically trashes remote notes** that were deleted locally (not in trash).
     *   **Push to Keep (second phase of sync):**
         *   Scans local Markdown files in the vault structure (`KeepVault/`, `KeepVault/Archived/`, `KeepVault/Trashed/`).
         *   Parses YAML frontmatter and Markdown content.
         *   Compares local note data with the corresponding Google Keep note.
+        *   **Title Handling Logic:**
+            *   For notes with empty YAML title: uses filename as title, **UNLESS** filename follows "Untitled_[ID]" pattern (keeps title empty for cleaner remote display).
+            *   H1 headers are **always preserved in content** (no longer extracted as title).
         *   **Conflict Handling & Update Detection:**
             *   Offers `--cherry-pick` mode to interactively decide between local and remote versions for conflicting notes.
             *   If not cherry-picking, prioritizes timestamps and material content/metadata differences to decide whether to push.
             *   `--force-push` overrides certain checks to force pushing local changes.
         *   Updates existing Keep notes with changes to title, text content, color, pinned status, archived status, trashed status, and labels.
         *   Creates *new* Keep notes for local Markdown files that don't have a Keep ID in their frontmatter.
-            *   Uses the filename (without extension) as the default title if no `title:` is specified in the frontmatter, or H1 if present and YAML title is empty.
+        *   **Immediately adds `archived`, `trashed`, and `pinned` fields** to newly created local files after sync.
         *   Updates the local file\'s frontmatter with the new Keep ID and timestamps after creating a note in Keep.
+    *   **Automatic Sync Log Feature:**
+        *   Creates and maintains a dedicated sync log note (`_Sync_Log.md`) in both Keep and local vault.
+        *   Contains summary of each sync operation (files created, updated, errors, timestamps).
+        *   Pinned in Keep for easy access and automatically updated after each sync.
 *   **Authentication:**
     *   Supports Google Master Token (recommended, obtained via an OAuth flow) and App Passwords.
     *   Uses the system keyring (`keyring` library) to securely store/retrieve the Master Token if available.
@@ -55,6 +64,8 @@ Notes are converted to Markdown files with YAML frontmatter preserving key metad
         python-dotenv
         PyYAML
         requests
+        matplotlib
+        numpy
         # Optional: python-magic (for better attachment type detection)
         ```
     *   Run: `pip install -r requirements.txt`
@@ -112,7 +123,8 @@ Run the scripts from your terminal in the project directory.
 3.  **Synchronize:** Run `python sync.py` regularly. This will:
     *   Pull changes from Google Keep to your Obsidian vault.
     *   Push changes from your Obsidian vault back to Google Keep.
-4.  **Clean up Single-Use Tags:** Run `python remove_single_use_tags.py` to remove tags that are only used in a single note.
+    *   **Automatically update the sync log** with operation summary.
+4.  **Clean up Single-Use Tags:** Run `python tools/tag_cleanup/remove_single_use_tags.py` to remove tags that are only used in a single note.
 
 *Repeat steps 2-4 as needed.*
 
@@ -122,13 +134,76 @@ Run the scripts from your terminal in the project directory.
 *   `KeepVault/Archived/`: Local Markdown notes corresponding to archived notes in Keep.
 *   `KeepVault/Trashed/`: Local Markdown notes corresponding to trashed notes in Keep.
 *   `KeepVault/Attachments/`: Downloaded media files (images, audio, etc.).
+*   `KeepVault/_Sync_Log.md`: **Automatic sync log note** with history of all sync operations.
 *   `sync.py`: Main script for two-way synchronization.
-*   `remove_single_use_tags.py`: Script to clean up tags that are only used in one note.
+*   `tools/tag_cleanup/remove_single_use_tags.py`: Script to clean up tags that are only used in one note.
+*   `backup_utils.py`: Utility functions for backup operations.
 *   `keep_state.json`: Cache file storing state from Google Keep to speed up syncs. Can be deleted to force a full refresh (`--full-sync`).
+*   `backup_state.json`: Tracks backup timing and sync count for automatic backup feature.
 *   `keep_notes_pulled.json`: (Optional, if `--debug-json-output` is used) Raw JSON dump of notes downloaded during the pull phase.
 *   `.env`: Stores configuration (email, optional credentials). **Add this to `.gitignore` if using version control.**
 *   `README.md`: This file.
 *   `requirements.txt`: Python dependencies.
+
+## Automatic Sync Log Feature
+
+The script automatically creates and maintains a sync log to track all synchronization operations.
+
+**Key Features:**
+*   **Automatic Creation:** A dedicated note titled "Sync Log" is created in both Google Keep and locally as `_Sync_Log.md`.
+*   **Pinned for Visibility:** The sync log note is automatically pinned in Google Keep for easy access.
+*   **Operation Summary:** Each sync updates the log with:
+    *   Sync start and completion timestamps (in local timezone).
+    *   Pull summary: files created, updated, moved, deleted, errors.
+    *   Push summary: notes created, updated, conflicts, errors.
+    *   Cherry-pick decisions (if `--cherry-pick` was used).
+*   **Persistent History:** The log accumulates history across multiple sync operations.
+*   **Dual Location:** Available both in Obsidian (for local reference) and Google Keep (for mobile access).
+
+**Sync Log Location:**
+*   **Local:** `KeepVault/_Sync_Log.md`
+*   **Remote:** "Sync Log" note in Google Keep (pinned)
+
+## Title and H1 Handling Logic
+
+The script has sophisticated logic for handling note titles and H1 headers:
+
+### Title Priority (Push Operation)
+1. **YAML `title` field** (highest priority)
+2. **Filename** (if YAML title is empty)
+3. **Special case:** Notes with filenames matching "Untitled_[ID]" pattern keep empty title for cleaner remote display
+
+### H1 Header Behavior
+*   **H1 headers are ALWAYS preserved in content** (changed from previous behavior)
+*   **No longer extracted as title** - H1 stays in the markdown body
+*   This ensures Obsidian display consistency while maintaining content integrity
+
+### Examples
+```markdown
+# Scenario 1: YAML title present
+---
+title: "My Important Note"
+---
+# This H1 stays in content
+Content here...
+
+# Scenario 2: Empty YAML title, normal filename
+---
+title: ""
+---
+# This H1 stays in content
+Content here...
+# Result: Title becomes filename, H1 preserved
+
+# Scenario 3: Untitled with ID pattern
+---
+title: ""
+---
+# This H1 stays in content
+Content here...
+# File: Untitled_19734db46ba.3e207d2c9b0da0e7.md
+# Result: Title stays empty, H1 preserved
+```
 
 ## Backup Feature
 
@@ -210,12 +285,20 @@ The synchronization process is divided into two main phases: Pull (Keep -> Local
 
 ### Deleted Notes (Local -> Keep)
 
-Deleting a local `.md` file directly will currently *not* delete the note in Google Keep. The next pull phase will detect the missing local file (by its ID from the index) and redownload it from Keep as an "orphan".
+**New Behavior (Automatic Remote Cleanup):**
+*   **Local Deletion Detection:** If a note exists remotely but has no corresponding local file (and is not in trash), the script assumes it was deleted locally.
+*   **Automatic Remote Cleanup:** The script automatically moves such notes to trash in Google Keep during the PULL phase.
+*   This ensures both locations stay synchronized when notes are deleted locally.
 
-To correctly delete a note in both locations:
-
+**Manual Deletion Methods:**
 *   **Preferred Method:** Delete or trash the note directly in Google Keep. The next pull phase of the script will then delete the corresponding local Markdown file as an orphan.
 *   **Alternative:** Move the local Markdown file into the `KeepVault/Trashed/` directory. The next push phase will detect the file in the Trashed directory and trash the corresponding note in Google Keep. The subsequent pull phase will ensure the local file remains in `KeepVault/Trashed/`.
+*   **Simple Deletion:** Delete the local `.md` file directly. The script will automatically trash the corresponding note in Google Keep during the next sync.
+
+**Important Notes:**
+*   Notes already in trash (either locally or remotely) are not affected by automatic cleanup.
+*   The automatic cleanup only affects active notes that have been deleted locally.
+*   Always run sync operations regularly to keep both locations in sync.
 
 ## Potential Flaws and Limitations (Code Audit Findings)
 
@@ -243,6 +326,21 @@ Understanding these potential issues can help users avoid problematic workflows 
 *   **Filename Issues:** Ensure note titles don't rely solely on characters forbidden in filenames (`\/:*?"<>|`).
 *   **Automatic Sync Conflicts:** If automatic sync exits with an "Unresolved conflict," it means material changes were detected, but the timestamp comparison didn't clearly favor the local version. Use `--debug` to see the timestamps. Resolve manually, or use `--force-push` to override.
 *   **Notes Not Pushing in Automatic Mode when File Mod Time is Newer:** Verify that the file modification time is genuinely newer than the remote timestamp using file system tools. Check debug logs to confirm the `local_updated_dt` being used includes the newer file time and that the comparison (`>`) is correctly evaluating. Ensure `material_changes_detected` is True for that note.
+
+### New Feature Troubleshooting
+
+*   **Sync Log Issues:** 
+    *   If `_Sync_Log.md` is missing locally, it will be recreated on next sync.
+    *   If sync log note is accidentally deleted in Keep, a new one will be created.
+    *   Sync log errors are logged but don't stop the main sync operation.
+*   **Title/H1 Issues:**
+    *   **H1 not preserved:** Check if file was processed by old script version - H1s are now always kept in content.
+    *   **Untitled notes getting filename as title:** Ensure filename follows exact pattern `Untitled_[ID].[ID].md` to keep title empty.
+    *   **Missing `archived`/`trashed`/`pinned` fields:** Run sync once to add these fields to all notes automatically.
+*   **Automatic Remote Deletion Issues:**
+    *   If notes are unexpectedly trashed in Keep, check if local files were accidentally deleted.
+    *   Use `--debug` to see which notes are detected as "deleted locally".
+    *   Notes in Trash folders (local or remote) are not affected by automatic cleanup.
 
 ## Contributing (Placeholder)
 
