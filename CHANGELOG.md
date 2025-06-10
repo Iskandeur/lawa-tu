@@ -4,6 +4,12 @@ All notable changes to the Google Keep <=> Obsidian sync project will be documen
 
 ## [Unreleased] - Recent Updates
 
+### Removed
+- **Automatic Remote Cleanup Feature**: Removed the automatic trashing of remote notes when they appear to be "deleted locally"
+  - This feature was causing new remote notes (created on other devices) to be incorrectly moved to trash
+  - The sync algorithm could not reliably distinguish between genuinely new remote notes and locally deleted notes
+  - Users should now manually delete notes from Google Keep if they delete them locally and want them removed remotely
+
 ### Added
 - **Automatic Sync Log Feature**: Creates and maintains `_Sync_Log.md` with detailed sync operation history
   - Tracks files created, updated, moved, deleted, and errors
@@ -22,10 +28,7 @@ All notable changes to the Google Keep <=> Obsidian sync project will be documen
   - Smart filename-to-title logic with special handling for "Untitled_[ID]" pattern files
   - Consistent title handling between PULL and PUSH operations
 
-- **Automatic Remote Cleanup**: 
-  - Automatically trashes remote notes when deleted locally
-  - Maintains synchronization between local deletions and remote state
-  - Only affects active notes (not already in trash)
+
 
 - **Enhanced Frontmatter Consistency**:
   - All notes now get `archived`, `trashed`, and `pinned` fields automatically

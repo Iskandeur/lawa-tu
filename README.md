@@ -22,7 +22,7 @@ Notes are converted to Markdown files with YAML frontmatter preserving key metad
         *   Handles basic filename sanitization (removes invalid characters, keeps spaces).
         *   Uses Keep's `updated` timestamp to only update local files if the remote note is newer (can be overridden with `--force-pull-overwrite`).
         *   Deletes local files ("orphans") corresponding to notes deleted in Keep.
-        *   **Automatically trashes remote notes** that were deleted locally (not in trash).
+
     *   **Push to Keep (second phase of sync):**
         *   Scans local Markdown files in the vault structure (`KeepVault/`, `KeepVault/Archived/`, `KeepVault/Trashed/`).
         *   Parses YAML frontmatter and Markdown content.
@@ -323,20 +323,10 @@ The synchronization process is divided into two main phases: Pull (Keep -> Local
 
 ### Deleted Notes (Local -> Keep)
 
-**New Behavior (Automatic Remote Cleanup):**
-*   **Local Deletion Detection:** If a note exists remotely but has no corresponding local file (and is not in trash), the script assumes it was deleted locally.
-*   **Automatic Remote Cleanup:** The script automatically moves such notes to trash in Google Keep during the PULL phase.
-*   This ensures both locations stay synchronized when notes are deleted locally.
-
 **Manual Deletion Methods:**
 *   **Preferred Method:** Delete or trash the note directly in Google Keep. The next pull phase of the script will then delete the corresponding local Markdown file as an orphan.
 *   **Alternative:** Move the local Markdown file into the `KeepVault/Trashed/` directory. The next push phase will detect the file in the Trashed directory and trash the corresponding note in Google Keep. The subsequent pull phase will ensure the local file remains in `KeepVault/Trashed/`.
-*   **Simple Deletion:** Delete the local `.md` file directly. The script will automatically trash the corresponding note in Google Keep during the next sync.
-
-**Important Notes:**
-*   Notes already in trash (either locally or remotely) are not affected by automatic cleanup.
-*   The automatic cleanup only affects active notes that have been deleted locally.
-*   Always run sync operations regularly to keep both locations in sync.
+*   **Local Deletion:** If you delete a local `.md` file directly, you should manually delete the corresponding note in Google Keep as well, as the sync algorithm no longer automatically handles this case.
 
 ## Potential Flaws and Limitations (Code Audit Findings)
 
@@ -375,10 +365,7 @@ Understanding these potential issues can help users avoid problematic workflows 
     *   **H1 not preserved:** Check if file was processed by old script version - H1s are now always kept in content.
     *   **Untitled notes getting filename as title:** Ensure filename follows exact pattern `Untitled_[ID].[ID].md` to keep title empty.
     *   **Missing `archived`/`trashed`/`pinned` fields:** Run sync once to add these fields to all notes automatically.
-*   **Automatic Remote Deletion Issues:**
-    *   If notes are unexpectedly trashed in Keep, check if local files were accidentally deleted.
-    *   Use `--debug` to see which notes are detected as "deleted locally".
-    *   Notes in Trash folders (local or remote) are not affected by automatic cleanup.
+
 
 ## Contributing (Placeholder)
 
