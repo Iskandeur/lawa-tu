@@ -1541,8 +1541,13 @@ def run_push(keep, args, counters):
                             elif local_updated_dt and (remote_updated_dt is None or local_updated_dt > remote_updated_dt):
                                 action_disposition = 'update_remote'
                                 logging.debug(f"  PUSH (AUTO): Local timestamp ({local_updated_dt}) is valid and newer than remote ({remote_updated_dt}). Marking for update.")
+                            elif remote_updated_dt and local_updated_dt and remote_updated_dt > local_updated_dt:
+                                # Remote is newer - this is actually the safer choice, so we'll skip instead of exiting
+                                logging.warning(f"  PUSH (AUTO): Material differences found for {local_keep_id} ('{gnote.title}'), but remote timestamp ({remote_updated_dt}) is newer than local ({local_updated_dt}). Skipping push to avoid overwriting newer remote version.")
+                                counters['push_skipped_conflict_remote_newer'] += 1
+                                action_disposition = 'skip_conflict_remote_newer'
                             else: # Material differences exist, but timestamps don't clearly favor local, and not forced.
-                                # This includes cases where remote is newer, timestamps are equal, or local timestamp is None.
+                                # This includes cases where timestamps are equal, or local timestamp is None.
                                 conflict_message = (
                                     f"Unresolved conflict for note ID {local_keep_id} ('{gnote.title}') in automatic mode.\n"
                                     f"  File: {rel_filepath}\n"
