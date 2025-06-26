@@ -180,15 +180,15 @@ def main():
     # Count notes with connections
     connected_notes = {name: note for name, note in notes.items() if note['has_connections']}
     
-    # Separate active notes that need to be archived
+    # Separate active notes that need to be archived (exclude pinned notes)
     active_connected_notes = {
         name: note for name, note in connected_notes.items() 
-        if not note['is_archived'] and not note['is_trashed']
+        if not note['is_archived'] and not note['is_trashed'] and not note['frontmatter'].get('pinned', False)
     }
     
     print(f"\nFound {len(notes)} total notes in the vault")
     print(f"Found {len(connected_notes)} notes with connections (outgoing or incoming links)")
-    print(f"Found {len(active_connected_notes)} ACTIVE notes that need to be archived")
+    print(f"Found {len(active_connected_notes)} ACTIVE notes that need to be archived (excluding pinned notes)")
     
     if not connected_notes:
         print("No connected notes found. This might indicate an issue with link detection.")
@@ -200,7 +200,7 @@ def main():
         return
     
     if not active_connected_notes:
-        print("No active notes need archiving - all connected notes are already archived/trashed.")
+        print("No active notes need archiving - all connected notes are already archived/trashed/pinned.")
         return
     
     # Show what will be updated
