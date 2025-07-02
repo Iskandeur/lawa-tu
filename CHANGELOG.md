@@ -56,6 +56,7 @@ All notable changes to the Google Keep <=> Obsidian sync project will be documen
   - Corrected file paths and command examples
 
 ### Fixed
+- **Push Operation Infinite Loop**: Resolved an issue where the script would hang indefinitely when updating a list-style note during a push operation. The underlying cause was an infinite loop created by repeatedly accessing a temporary copy of the note's items instead of the original list.
 - **H1 Duplication Issue**: Script no longer creates duplicate H1 headers matching YAML titles
 - **Frontmatter Completeness**: New notes now get all required fields immediately after creation
 - **File Path Corrections**: Updated documentation to reflect actual script locations

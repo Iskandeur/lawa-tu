@@ -1293,19 +1293,14 @@ def update_gnote_from_local_data(gnote, local_metadata, local_content_raw, keep_
         if current_remote_list_md != content_to_push:
             logging.info(f"  PUSH_UPDATE ({note_id}): Updating list items.")
             changes_made_to_gnote = True
-            # Clear existing items and add new ones
-            # We need to be careful about item IDs if we want to preserve them.
-            # For now, simple clear and add. This will lose existing item IDs.
-            existing_ids_to_text = {item.id: item.text for item in gnote.items}
-            new_items_to_add = [] # list of (text, checked) tuples
+            # Clear existing items and add new ones.
+            # This is a simple clear and add. This will lose existing item IDs.
 
-            # Try to match new items to old items by text to preserve IDs somewhat
-            # This is a very basic matching strategy.
-            # A full diff algorithm would be better (e.g., using difflib)
-            
-            # Clear all items from the remote note
-            while len(gnote.items) > 0:
-                gnote.items.pop(0) # Remove from the beginning
+            # The loop 'while len(gnote.items) > 0: gnote.items.pop(0)' can cause
+            # an infinite loop because .items is a property that returns a new sorted copy.
+            # To modify the list, we must get the underlying collection through ._items()
+            # and then clear it.
+            gnote._items().clear()
 
             # Add items from local_list_items_parsed
             for local_item_data in local_list_items_parsed:
