@@ -7,6 +7,16 @@
 - Implement optional Obsidian configuration sync to an external Git repo using `tools/obsidian_config_sync.py` (inspired by `inspiration_for_config_sync.py`).
 - Minor README updates to document new configuration and file paths.
 
+### Fixed
+- **Obsidian Config Sync Authentication Issues**: Enhanced `ensure_obsidian_repo_local()` with robust authentication fallback system
+  - Automatic SSH-to-HTTPS conversion when SSH authentication fails
+  - Repository access testing before attempting operations
+  - Automatic config.json updates with working URLs
+  - Comprehensive error handling with user-friendly setup guidance
+  - Seamless setup for new users without SSH keys configured
+- **Enhanced Git Operations**: Added timeout protection and improved error handling for all Git operations
+- **User Experience**: Created `OBSIDIAN_CONFIG_SETUP.md` with comprehensive setup guide for all authentication methods
+
 ### Obsidian Config Sync Enhancements
 - `obsidian_git_repo` now expects a REMOTE URL (prefer SSH); the inner repo is ensured at `lipu-lawa-tu/` and ignored by the outer repo.
 - Before exporting, the tool performs a non-interactive `git pull --rebase --autostash` to incorporate newer remote snapshots.

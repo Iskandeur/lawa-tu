@@ -231,17 +231,141 @@ def load_app_config():
         logging.warning(f"Failed to read {CONFIG_FILE}: {e}")
     return {}
 
+def _convert_ssh_to_https(repo_url: str) -> str:
+    """Convert SSH URL to HTTPS URL for fallback authentication."""
+    if repo_url.startswith("git@github.com:"):
+        # Convert git@github.com:owner/repo.git to https://github.com/owner/repo.git
+        repo_path = repo_url.replace("git@github.com:", "").replace(".git", "")
+        return f"https://github.com/{repo_path}.git"
+    elif repo_url.startswith("git@gitlab.com:"):
+        # Convert git@gitlab.com:owner/repo.git to https://gitlab.com/owner/repo.git
+        repo_path = repo_url.replace("git@gitlab.com:", "").replace(".git", "")
+        return f"https://gitlab.com/{repo_path}.git"
+    return repo_url  # Return original if not SSH or unsupported format
+
+
+def _test_git_access(repo_url: str) -> bool:
+    """Test if we can access the repository with current credentials."""
+    try:
+        env = os.environ.copy()
+        env["GIT_TERMINAL_PROMPT"] = "0"  # Disable interactive prompts
+        result = subprocess.run(
+            ["git", "ls-remote", "--heads", repo_url], 
+            capture_output=True, 
+            text=True, 
+            timeout=30,
+            env=env
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+
+def _update_config_repo_url(new_url: str):
+    """Update the obsidian_git_repo URL in config.json after successful fallback."""
+    try:
+        config = load_app_config()
+        config['obsidian_git_repo'] = new_url
+        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=2)
+        logging.info(f"Updated config.json with working repository URL: {new_url}")
+    except Exception as e:
+        logging.warning(f"Failed to update config.json with new URL: {e}")
+
+
+def _get_clone_failure_help_message(original_url: str, last_error: Exception) -> str:
+    """Generate a helpful error message for clone failures."""
+    msg = f"Unable to clone Obsidian config repository from {original_url}.\n"
+    
+    if original_url.startswith("git@"):
+        msg += "\nThis appears to be an SSH URL. Common solutions:\n"
+        msg += "1. Set up SSH keys for GitHub/GitLab:\n"
+        msg += "   - Generate SSH key: ssh-keygen -t ed25519 -C \"your_email@example.com\"\n"
+        msg += "   - Add public key to your GitHub/GitLab account\n"
+        msg += "   - Test access: ssh -T git@github.com\n\n"
+        msg += "2. Alternative: Use HTTPS URL in config.json instead:\n"
+        https_url = _convert_ssh_to_https(original_url)
+        if https_url != original_url:
+            msg += f"   Change 'obsidian_git_repo' to: \"{https_url}\"\n\n"
+        msg += "3. Disable Obsidian config sync by setting 'sync_obsidian_config': false in config.json\n"
+    else:
+        msg += "\nPossible solutions:\n"
+        msg += "1. Check that the repository URL is correct and accessible\n"
+        msg += "2. Ensure you have proper authentication (GitHub token, SSH keys, etc.)\n"
+        msg += "3. Try accessing the repository manually: git clone " + original_url + "\n"
+        msg += "4. Disable Obsidian config sync by setting 'sync_obsidian_config': false in config.json\n"
+    
+    if last_error:
+        msg += f"\nLast error: {last_error}"
+    
+    return msg
+
+
 def ensure_obsidian_repo_local(repo_url: str) -> str:
     """
     Ensure the Obsidian config Git repo exists locally under OBSIDIAN_INNER_REPO_DIRNAME.
     If missing, clone it. If present but no git metadata, init and set origin.
+    
+    Provides fallback authentication methods:
+    1. Try SSH URL as provided
+    2. Convert SSH to HTTPS and try again
+    3. Disable config sync with helpful error message
+    
     Returns the absolute local path to the repo root.
     """
     local_dir = os.path.abspath(OBSIDIAN_INNER_REPO_DIRNAME)
+    
     try:
         if not os.path.exists(local_dir):
             os.makedirs(os.path.dirname(local_dir), exist_ok=True)
-            subprocess.run(["git", "clone", repo_url, local_dir], check=True)
+            
+            # Try to clone with the provided URL first
+            clone_success = False
+            urls_to_try = [repo_url]
+            
+            # If it's an SSH URL, add HTTPS fallback
+            if repo_url.startswith("git@"):
+                https_url = _convert_ssh_to_https(repo_url)
+                if https_url != repo_url:
+                    urls_to_try.append(https_url)
+            
+            last_error = None
+            for url in urls_to_try:
+                try:
+                    logging.info(f"Attempting to clone Obsidian config repo from: {url}")
+                    
+                    # Test access first to avoid hanging
+                    if not _test_git_access(url):
+                        logging.warning(f"Cannot access repository at {url}")
+                        continue
+                    
+                    env = os.environ.copy()
+                    env["GIT_TERMINAL_PROMPT"] = "0"  # Disable interactive prompts
+                    
+                    subprocess.run(["git", "clone", url, local_dir], check=True, env=env)
+                    clone_success = True
+                    
+                    # Update the stored URL if we used a fallback
+                    if url != repo_url:
+                        logging.info(f"Successfully cloned using HTTPS fallback. Updating config.json...")
+                        _update_config_repo_url(url)
+                    
+                    break
+                    
+                except subprocess.CalledProcessError as e:
+                    last_error = e
+                    logging.warning(f"Failed to clone from {url}: {e}")
+                    # Clean up partial clone if it exists
+                    if os.path.exists(local_dir):
+                        import shutil
+                        shutil.rmtree(local_dir, ignore_errors=True)
+                    continue
+            
+            if not clone_success:
+                error_msg = _get_clone_failure_help_message(repo_url, last_error)
+                logging.error(error_msg)
+                raise Exception(error_msg)
+                
             return local_dir
 
         git_dir = os.path.join(local_dir, ".git")
@@ -255,24 +379,68 @@ def ensure_obsidian_repo_local(repo_url: str) -> str:
             subprocess.run(["git", "remote", "add", "origin", repo_url], cwd=local_dir, check=True)
             return local_dir
 
-        # Ensure origin is set to repo_url
+        # Ensure origin is set to repo_url with fallback support
         current_origin = None
         try:
             res = subprocess.run(["git", "remote", "get-url", "origin"], cwd=local_dir, capture_output=True, text=True, check=True)
             current_origin = (res.stdout or "").strip()
         except subprocess.CalledProcessError:
             current_origin = None
+        
+        working_url = repo_url
         if not current_origin:
-            subprocess.run(["git", "remote", "add", "origin", repo_url], cwd=local_dir, check=True)
-        elif current_origin != repo_url:
-            # Update origin to the provided URL
-            subprocess.run(["git", "remote", "remove", "origin"], cwd=local_dir, check=True)
-            subprocess.run(["git", "remote", "add", "origin", repo_url], cwd=local_dir, check=True)
+            # No origin exists, try to add one with fallback
+            urls_to_try = [repo_url]
+            if repo_url.startswith("git@"):
+                https_url = _convert_ssh_to_https(repo_url)
+                if https_url != repo_url:
+                    urls_to_try.append(https_url)
+            
+            origin_set = False
+            for url in urls_to_try:
+                try:
+                    if _test_git_access(url):
+                        subprocess.run(["git", "remote", "add", "origin", url], cwd=local_dir, check=True)
+                        working_url = url
+                        origin_set = True
+                        if url != repo_url:
+                            logging.info(f"Set origin to HTTPS fallback URL: {url}")
+                            _update_config_repo_url(url)
+                        break
+                except subprocess.CalledProcessError:
+                    continue
+            
+            if not origin_set:
+                # Fallback: set origin even if we can't test access
+                subprocess.run(["git", "remote", "add", "origin", working_url], cwd=local_dir, check=True)
+                
+        else:
+            # Origin exists - check if it's working or needs fallback
+            needs_fallback = False
+            if current_origin.startswith("git@") and not _test_git_access(current_origin):
+                needs_fallback = True
+            elif current_origin != repo_url:
+                # URL doesn't match config, update it
+                needs_fallback = repo_url.startswith("git@") and not _test_git_access(repo_url)
+                
+            if needs_fallback:
+                # Try HTTPS fallback
+                https_url = _convert_ssh_to_https(current_origin if current_origin == repo_url else repo_url)
+                if https_url != current_origin and _test_git_access(https_url):
+                    logging.info(f"Switching from SSH to HTTPS: {current_origin} -> {https_url}")
+                    subprocess.run(["git", "remote", "set-url", "origin", https_url], cwd=local_dir, check=True)
+                    working_url = https_url
+                    _update_config_repo_url(https_url)
+                else:
+                    logging.warning(f"SSH origin {current_origin} not accessible and HTTPS fallback not available")
+            elif current_origin != repo_url:
+                # Update origin to the provided URL
+                subprocess.run(["git", "remote", "set-url", "origin", repo_url], cwd=local_dir, check=True)
 
         return local_dir
     except Exception as e:
-        logging.error(f"Failed to ensure local Obsidian repo at {local_dir}: {e}", exc_info=DEBUG)
-        return local_dir
+        logging.error(f"Failed to ensure local Obsidian repo at {local_dir}: {e}")
+        raise
 
 # --- Markdown Processing ---
 def escape_hashtags(text):
@@ -2394,30 +2562,35 @@ def main():
                 logging.info("Obsidian config sync enabled but 'obsidian_git_repo' (URL) is not set in config.json. Skipping.")
                 counters['config_sync_skipped'] += 1
             else:
-                local_repo = ensure_obsidian_repo_local(repo_url)
-                # Always pull before exporting to ensure we don't overwrite a newer remote
                 try:
-                    logging.info(f"Obsidian config: pulling latest from remote in {local_repo}")
-                    subprocess.run(["git", "pull", "--rebase", "--autostash"], cwd=local_repo, check=True, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
-                    counters['config_sync_pulled_remote'] += 1
-                except subprocess.CalledProcessError as e_pull:
-                    logging.warning(f"Obsidian config: git pull failed or no changes: {e_pull}")
-                except Exception as e_pull_gen:
-                    logging.warning(f"Obsidian config: unexpected error during git pull: {e_pull_gen}")
+                    local_repo = ensure_obsidian_repo_local(repo_url)
+                    # Always pull before exporting to ensure we don't overwrite a newer remote
+                    try:
+                        logging.info(f"Obsidian config: pulling latest from remote in {local_repo}")
+                        subprocess.run(["git", "pull", "--rebase", "--autostash"], cwd=local_repo, check=True, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+                        counters['config_sync_pulled_remote'] += 1
+                    except subprocess.CalledProcessError as e_pull:
+                        logging.warning(f"Obsidian config: git pull failed or no changes: {e_pull}")
+                    except Exception as e_pull_gen:
+                        logging.warning(f"Obsidian config: unexpected error during git pull: {e_pull_gen}")
 
-                logging.info(f"Attempting Obsidian config export to git repo at: {local_repo}")
-                try:
-                    version = export_to_git_repo(VAULT_DIR, local_repo)
-                    if version:
-                        counters['config_sync_exported'] += 1
-                        counters['config_sync_last_version'] = version
-                        logging.info(f"Obsidian config snapshot exported: {version}")
-                    else:
-                        counters['config_sync_skipped'] += 1
-                        logging.info("Obsidian config export skipped or made no changes.")
-                except Exception as e_obs:
+                    logging.info(f"Attempting Obsidian config export to git repo at: {local_repo}")
+                    try:
+                        version = export_to_git_repo(VAULT_DIR, local_repo)
+                        if version:
+                            counters['config_sync_exported'] += 1
+                            counters['config_sync_last_version'] = version
+                            logging.info(f"Obsidian config snapshot exported: {version}")
+                        else:
+                            counters['config_sync_skipped'] += 1
+                            logging.info("Obsidian config export skipped or made no changes.")
+                    except Exception as e_obs:
+                        counters['config_sync_errors'] += 1
+                        logging.error(f"Obsidian config export failed: {e_obs}", exc_info=DEBUG)
+                except Exception as e_repo_setup:
                     counters['config_sync_errors'] += 1
-                    logging.error(f"Obsidian config export failed: {e_obs}", exc_info=DEBUG)
+                    logging.error(f"Failed to set up Obsidian config repository: {e_repo_setup}")
+                    logging.info("Obsidian config sync will be skipped. Fix the repository setup to enable config sync.")
         else:
             logging.debug("Obsidian config sync disabled via config.json.")
     except Exception as e_obs_outer:

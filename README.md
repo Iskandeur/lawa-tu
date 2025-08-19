@@ -371,6 +371,11 @@ Understanding these potential issues can help users avoid problematic workflows 
     *   **H1 not preserved:** Check if file was processed by old script version - H1s are now always kept in content.
     *   **Untitled notes getting filename as title:** Ensure filename follows exact pattern `Untitled_[ID].[ID].md` to keep title empty.
     *   **Missing `archived`/`trashed`/`pinned` fields:** Run sync once to add these fields to all notes automatically.
+*   **Obsidian Config Sync Issues:**
+    *   **SSH Permission Denied:** The system automatically detects SSH authentication failures and switches to HTTPS. Check that `config.json` was updated with the working URL.
+    *   **Repository Not Found:** Verify the repository URL is correct and accessible. The system will provide helpful setup instructions for new users.
+    *   **Git Pull/Push Failures:** Config sync operates independently - failures won't affect the main Keep ↔ Obsidian sync. Check network connectivity and repository permissions.
+    *   **Want to Disable:** Set `"sync_obsidian_config": false` in `config.json` to disable the feature entirely.
 
 
 ## Contributing (Placeholder)

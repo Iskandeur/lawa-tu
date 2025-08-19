@@ -98,7 +98,8 @@ def _git_run(repo_root: Path, *args: str) -> None:
 	env["GIT_TERMINAL_PROMPT"] = "0"
 	# Unset askpass if provided by host IDE
 	env.pop("GIT_ASKPASS", None)
-	subprocess.run(args, cwd=repo_root, check=True, env=env)
+	env.pop("SSH_ASKPASS", None)
+	subprocess.run(args, cwd=repo_root, check=True, env=env, timeout=60)
 
 
 def export_to_git_repo(vault_dir: str, repo_root: str, commit_message: Optional[str] = None) -> Optional[str]:
@@ -126,7 +127,8 @@ def export_to_git_repo(vault_dir: str, repo_root: str, commit_message: Optional[
 	# Pull latest to minimize conflicts
 	try:
 		_git_run(repo_path, "git", "pull", "--rebase", "--autostash")
-	except subprocess.CalledProcessError:
+	except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+		logger.warning(f"Git pull failed or timed out: {e}")
 		pass
 
 	latest_file = base / LATEST_NAME
@@ -166,9 +168,9 @@ def export_to_git_repo(vault_dir: str, repo_root: str, commit_message: Optional[
 			pass
 		try:
 			_git_run(repo_path, "git", "push")
-		except subprocess.CalledProcessError:
-			logger.warning("Git push failed (offline?). Changes remain local to the repo.")
-	except subprocess.CalledProcessError as e:
+		except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+			logger.warning(f"Git push failed or timed out: {e}. Changes remain local to the repo.")
+	except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
 		logger.error(f"Git command failed: {e}")
 		return None
 
