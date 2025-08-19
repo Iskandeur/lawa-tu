@@ -782,10 +782,18 @@ def run_pull(keep, args, counters):
         if args.debug_json_output: # If user wants to dump the processed data
             pulled_notes_for_json_debug.append(note_data_dict)
 
+        # Determine if the note already exists locally before deciding to skip empty notes
+        note_exists_locally = current_keep_id in local_notes_index
+
+        # Only skip empty notes when they are new (do not exist locally) AND are not trashed/archived remotely.
+        # For existing locals or trashed/archived notes, we must still process to propagate state/moves and content clearing.
         if is_note_empty(note_obj, note_data_dict): # Check emptiness after media processing
-            logging.debug(f"PULL: Skipping note ID {current_keep_id}: Empty content.")
-            counters['pull_skipped_empty'] += 1
-            continue
+            if not note_exists_locally and not note_obj.trashed and not note_obj.archived:
+                logging.debug(f"PULL: Skipping note ID {current_keep_id}: Empty content (new active note).")
+                counters['pull_skipped_empty'] += 1
+                continue
+            else:
+                logging.debug(f"PULL: Note ID {current_keep_id} is empty but will be processed (exists locally or trashed/archived).")
 
         try:
             keep_title = note_obj.title
