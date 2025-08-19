@@ -2,8 +2,11 @@ gkeepapi>=0.14.3
 keyring
 gpsoauth
 python-dotenv
-PyYAML
+PyYAML>=6.0
 requests
-matplotlib
-numpy
-# Optional: python-magic (for better attachment type detection)
+
+# Optional: for better attachment type detection in sync.py
+# python-magic
+
+# Analytics/visualization dependencies are not required for core sync.
+# See tools/requirements_analytics.txt for those.

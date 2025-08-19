@@ -139,7 +139,10 @@ Run the scripts from your terminal in the project directory.
 *   `sync.py`: Main script for two-way synchronization.
 *   `tools/tag_cleanup/remove_single_use_tags.py`: Script to clean up tags that are only used in one note.
 *   `tools/archive_connected_notes.py`: Script to automatically archive notes that have connections (outgoing or incoming `[[]]` links).
-*   `backup_utils.py`: Utility functions for backup operations.
+*   `tools/backup_utils.py`: Utility functions for backup operations.
+*   `tools/obsidian_config_sync.py`: Helper to export Obsidian config to a separate Git repo.
+*   `config.json`: App config; set `sync_obsidian_config` and `obsidian_git_repo` (remote URL, prefer SSH).
+*   `lipu-lawa-tu/`: Inner Git repo (ignored by outer repo) used only for Obsidian config snapshots.
 *   `keep_state.json`: Cache file storing state from Google Keep to speed up syncs. Can be deleted to force a full refresh (`--full-sync`).
 *   `backup_state.json`: Tracks backup timing and sync count for automatic backup feature.
 *   `keep_notes_pulled.json`: (Optional, if `--debug-json-output` is used) Raw JSON dump of notes downloaded during the pull phase.
@@ -291,7 +294,7 @@ The synchronization process is divided into two main phases: Pull (Keep -> Local
         *   If timestamps are equal or unreliable, a content hash comparison is performed as a fallback to detect if the file content differs, triggering an update if they don't match.
         *   If the local timestamp is newer or equal (and content matches if timestamps were unreliable), the local file is skipped for content update.
     *   **File Placement:** The local file is placed or moved into the `KeepVault/`, `KeepVault/Archived/`, or `KeepVault/Trashed/` subdirectory based on the note's current archived or trashed status in Keep.
-4.  **Orphan Cleanup:** After processing all notes from Keep, the script identifies any local Markdown files (by ID in the index) that no longer have a corresponding note in Keep. These "orphaned" local files are deleted, assuming the note was deleted in Keep.
+4.  **Orphan Cleanup:** After processing all notes from Keep, the script identifies any local Markdown files (by ID in the index) that no longer have a corresponding note in Keep. These "orphaned" local files are deleted, assuming the note was permanently deleted in Keep.
 5.  **Orphaned Attachment Cleanup:** Any files in the `KeepVault/Attachments/` directory that were not referenced by any of the pulled notes during the current sync are considered orphaned and are deleted.
 
 ### Push Phase (Local -> Keep)
@@ -321,12 +324,15 @@ The synchronization process is divided into two main phases: Pull (Keep -> Local
 6.  **Final Sync:** After all creation and update actions are staged on the `gkeepapi` object, a final `keep.sync()` is called to commit all changes to Google Keep in a batch. The cached state is saved.
 7.  **Update Local IDs (for new notes):** For local files that resulted in new notes being created in Keep, their YAML frontmatter is updated with the new `id` assigned by Keep and the latest timestamps.
 
-### Deleted Notes (Local -> Keep)
+### Trash and Delete Behavior
 
-**Manual Deletion Methods:**
-*   **Preferred Method:** Delete or trash the note directly in Google Keep. The next pull phase of the script will then delete the corresponding local Markdown file as an orphan.
-*   **Alternative:** Move the local Markdown file into the `KeepVault/Trashed/` directory. The next push phase will detect the file in the Trashed directory and trash the corresponding note in Google Keep. The subsequent pull phase will ensure the local file remains in `KeepVault/Trashed/`.
-*   **Local Deletion:** If you delete a local `.md` file directly, you should manually delete the corresponding note in Google Keep as well, as the sync algorithm no longer automatically handles this case.
+**In Google Keep -> Local:**
+*   **Trashing a note in Keep:** On the next pull, the corresponding local file is moved into `KeepVault/Trashed/`. Its content and metadata are updated to match the remote (including when the remote note is empty). The file is not deleted locally.
+*   **Permanently deleting a note in Keep:** On the next pull, the corresponding local file is removed as an orphan.
+
+**Local -> Google Keep:**
+*   **Trashing from local:** Move the local Markdown file into the `KeepVault/Trashed/` directory. The next push will trash the corresponding note in Google Keep. Subsequent pulls keep the file in `KeepVault/Trashed/`.
+*   **Deleting a local file:** If you delete a local `.md` file directly, also delete the corresponding note in Google Keep. The sync does not automatically delete remote notes for locally deleted files.
 
 ## Potential Flaws and Limitations (Code Audit Findings)
 

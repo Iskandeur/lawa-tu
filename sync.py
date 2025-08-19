@@ -27,7 +27,9 @@ import tarfile # Though not directly used in sync.py, good to have if considerin
 from datetime import timedelta # Already has datetime
 # import json # Already present
 # os, logging, sys, argparse, etc. are already present
-import backup_utils # For the newly created backup functions
+import subprocess
+from tools import backup_utils # Moved into tools package
+from tools.obsidian_config_sync import export_to_git_repo
 
 
 # --- Logging Setup ---
@@ -76,6 +78,8 @@ RESERVED_NAMES = {
     "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
     "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
 }
+CONFIG_FILE = "config.json"
+OBSIDIAN_INNER_REPO_DIRNAME = "lipu-lawa-tu"
 
 # --- Sync Log Constants ---
 SYNC_LOG_FILENAME = "_Sync_Log.md"
@@ -216,6 +220,59 @@ def save_backup_state(state):
         logging.info(f"Saved backup state to {BACKUP_STATE_FILE}.")
     except IOError as e:
         logging.warning(f"Could not save backup state to {BACKUP_STATE_FILE}: {e}", exc_info=DEBUG)
+
+# --- App Config ---
+def load_app_config():
+    try:
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+    except Exception as e:
+        logging.warning(f"Failed to read {CONFIG_FILE}: {e}")
+    return {}
+
+def ensure_obsidian_repo_local(repo_url: str) -> str:
+    """
+    Ensure the Obsidian config Git repo exists locally under OBSIDIAN_INNER_REPO_DIRNAME.
+    If missing, clone it. If present but no git metadata, init and set origin.
+    Returns the absolute local path to the repo root.
+    """
+    local_dir = os.path.abspath(OBSIDIAN_INNER_REPO_DIRNAME)
+    try:
+        if not os.path.exists(local_dir):
+            os.makedirs(os.path.dirname(local_dir), exist_ok=True)
+            subprocess.run(["git", "clone", repo_url, local_dir], check=True)
+            return local_dir
+
+        git_dir = os.path.join(local_dir, ".git")
+        if not os.path.isdir(git_dir):
+            # Initialize as a git repo and set origin
+            subprocess.run(["git", "init"], cwd=local_dir, check=True)
+            try:
+                subprocess.run(["git", "checkout", "-b", "main"], cwd=local_dir, check=True)
+            except subprocess.CalledProcessError:
+                pass
+            subprocess.run(["git", "remote", "add", "origin", repo_url], cwd=local_dir, check=True)
+            return local_dir
+
+        # Ensure origin is set to repo_url
+        current_origin = None
+        try:
+            res = subprocess.run(["git", "remote", "get-url", "origin"], cwd=local_dir, capture_output=True, text=True, check=True)
+            current_origin = (res.stdout or "").strip()
+        except subprocess.CalledProcessError:
+            current_origin = None
+        if not current_origin:
+            subprocess.run(["git", "remote", "add", "origin", repo_url], cwd=local_dir, check=True)
+        elif current_origin != repo_url:
+            # Update origin to the provided URL
+            subprocess.run(["git", "remote", "remove", "origin"], cwd=local_dir, check=True)
+            subprocess.run(["git", "remote", "add", "origin", repo_url], cwd=local_dir, check=True)
+
+        return local_dir
+    except Exception as e:
+        logging.error(f"Failed to ensure local Obsidian repo at {local_dir}: {e}", exc_info=DEBUG)
+        return local_dir
 
 # --- Markdown Processing ---
 def escape_hashtags(text):
@@ -1824,7 +1881,7 @@ def run_push(keep, args, counters):
 
 
 # --- Sync Log Note Update Function ---
-def update_sync_log_note(keep, counters, vault_dir, sync_start_time_iso, args):
+def update_sync_log_note(keep, counters, vault_dir, sync_start_time_iso, args, app_config=None):
     """
     Creates or updates a dedicated sync log note in Keep and locally.
     This note contains a summary of the last sync operation.
@@ -1906,6 +1963,21 @@ def update_sync_log_note(keep, counters, vault_dir, sync_start_time_iso, args):
 
     else:
         summary_parts.append("  Push operation was skipped.")
+
+    # Obsidian Config Sync summary
+    summary_parts.append("")
+    summary_parts.append("## Obsidian Config Sync")
+    if app_config.get('sync_obsidian_config'):
+        summary_parts.append(f"  Attempted: {counters['config_sync_attempted']}")
+        summary_parts.append(f"  Pulled remote updates: {counters['config_sync_pulled_remote']}")
+        summary_parts.append(f"  Snapshots exported: {counters['config_sync_exported']}")
+        summary_parts.append(f"  Skipped (no changes): {counters['config_sync_skipped']}")
+        if counters['config_sync_last_version']:
+            summary_parts.append(f"  Last snapshot version: {counters['config_sync_last_version']}")
+        if counters['config_sync_errors'] > 0:
+            summary_parts.append(f"  Errors: {counters['config_sync_errors']}")
+    else:
+        summary_parts.append("  Obsidian config sync is disabled.")
 
     if args.dry_run:
         summary_parts.append("") # Add a blank line
@@ -2061,6 +2133,7 @@ def main():
         logging.warning("Could not automatically determine local timezone. Timestamps in YAML will be UTC ('Z').")
 
     load_dotenv()
+    app_config = load_app_config()
     email = args.email or os.getenv("GOOGLE_KEEP_EMAIL")
     if not email:
         logging.error("Email address not provided via command line or .env (GOOGLE_KEEP_EMAIL).")
@@ -2154,6 +2227,14 @@ def main():
         'push_cherrypick_remote_chosen_local_updated': 0, 'push_cherrypick_user_skipped': 0,
         'push_errors_analysis': 0, 'push_errors_apply': 0, 'push_errors_final_sync':0,
         'push_errors_local_id_update':0,
+
+        # Obsidian config sync counters
+        'config_sync_attempted': 0,
+        'config_sync_exported': 0,
+        'config_sync_skipped': 0,
+        'config_sync_errors': 0,
+        'config_sync_pulled_remote': 0,
+        'config_sync_last_version': None,
     }
     mimetypes.init() # For PULL's attachment handling
 
@@ -2183,9 +2264,11 @@ def main():
             last_backup_time_dt = datetime.fromisoformat(last_backup_time_str)
             # If naive, try to localize it to UTC if LOCAL_TZ is not available, or make it aware based on LOCAL_TZ then convert to UTC
             if last_backup_time_dt.tzinfo is None or last_backup_time_dt.tzinfo.utcoffset(last_backup_time_dt) is None: # Check if naive
-                if LOCAL_TZ: # LOCAL_TZ is defined in sync.py
-                    last_backup_time_dt = LOCAL_TZ.localize(last_backup_time_dt).astimezone(timezone.utc)
-                else: # Assume UTC if no local timezone info
+                if LOCAL_TZ:
+                    # Treat naive time as local, then convert to UTC
+                    last_backup_time_dt = last_backup_time_dt.replace(tzinfo=LOCAL_TZ).astimezone(timezone.utc)
+                else:
+                    # Assume UTC if no local timezone info
                     last_backup_time_dt = last_backup_time_dt.replace(tzinfo=timezone.utc)
             else: # Already aware, ensure it's UTC
                  last_backup_time_dt = last_backup_time_dt.astimezone(timezone.utc)
@@ -2302,11 +2385,50 @@ def main():
     if args.dry_run:
         print("\n[Dry Run Mode] No actual changes were made to local files or Google Keep.")
     
+    # Optional Obsidian config Git sync (after pull/push)
+    try:
+        if app_config.get('sync_obsidian_config'):
+            counters['config_sync_attempted'] += 1
+            repo_url = app_config.get('obsidian_git_repo', '')
+            if not repo_url:
+                logging.info("Obsidian config sync enabled but 'obsidian_git_repo' (URL) is not set in config.json. Skipping.")
+                counters['config_sync_skipped'] += 1
+            else:
+                local_repo = ensure_obsidian_repo_local(repo_url)
+                # Always pull before exporting to ensure we don't overwrite a newer remote
+                try:
+                    logging.info(f"Obsidian config: pulling latest from remote in {local_repo}")
+                    subprocess.run(["git", "pull", "--rebase", "--autostash"], cwd=local_repo, check=True, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+                    counters['config_sync_pulled_remote'] += 1
+                except subprocess.CalledProcessError as e_pull:
+                    logging.warning(f"Obsidian config: git pull failed or no changes: {e_pull}")
+                except Exception as e_pull_gen:
+                    logging.warning(f"Obsidian config: unexpected error during git pull: {e_pull_gen}")
+
+                logging.info(f"Attempting Obsidian config export to git repo at: {local_repo}")
+                try:
+                    version = export_to_git_repo(VAULT_DIR, local_repo)
+                    if version:
+                        counters['config_sync_exported'] += 1
+                        counters['config_sync_last_version'] = version
+                        logging.info(f"Obsidian config snapshot exported: {version}")
+                    else:
+                        counters['config_sync_skipped'] += 1
+                        logging.info("Obsidian config export skipped or made no changes.")
+                except Exception as e_obs:
+                    counters['config_sync_errors'] += 1
+                    logging.error(f"Obsidian config export failed: {e_obs}", exc_info=DEBUG)
+        else:
+            logging.debug("Obsidian config sync disabled via config.json.")
+    except Exception as e_obs_outer:
+        counters['config_sync_errors'] += 1
+        logging.error(f"Unexpected error in Obsidian config sync block: {e_obs_outer}", exc_info=DEBUG)
+
     # Update the dedicated sync log note (after pull/push, before final console summary)
     if not args.dry_run: # Don't update log note file/remote on dry run, but summary construction can be tested by function if needed
         # The update_sync_log_note function has its own dry_run checks for remote operations
         logging.info("MAIN_DEBUG: About to call update_sync_log_note.")
-        update_sync_log_note(keep, counters, VAULT_DIR, sync_start_time.isoformat().replace('+00:00', 'Z'), args)
+        update_sync_log_note(keep, counters, VAULT_DIR, sync_start_time.isoformat().replace('+00:00', 'Z'), args, app_config)
         logging.info("MAIN_DEBUG: Returned from update_sync_log_note.")
     elif args.dry_run:
         print(f"\n[Dry Run] Sync log note ('{SYNC_LOG_FILENAME}') would be updated with the summary above.")

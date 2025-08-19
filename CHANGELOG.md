@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- Move `backup_utils.py` into `tools/backup_utils.py` and update imports in `sync.py`.
+- Add `config.json` with `sync_obsidian_config` (boolean) and `obsidian_git_repo` (string path).
+- Implement optional Obsidian configuration sync to an external Git repo using `tools/obsidian_config_sync.py` (inspired by `inspiration_for_config_sync.py`).
+- Minor README updates to document new configuration and file paths.
+
+### Obsidian Config Sync Enhancements
+- `obsidian_git_repo` now expects a REMOTE URL (prefer SSH); the inner repo is ensured at `lipu-lawa-tu/` and ignored by the outer repo.
+- Before exporting, the tool performs a non-interactive `git pull --rebase --autostash` to incorporate newer remote snapshots.
+- Export writes to `obsidian-config/<version>/` and updates `LATEST`, then commits and attempts to push (non-interactive; failures logged but non-fatal).
+- The Sync Log note now includes an “Obsidian Config Sync” section (attempted, pulled, exported, skipped, last version, errors).
+
 All notable changes to the Google Keep <=> Obsidian sync project will be documented in this file.
 
 ## [Unreleased] - Recent Updates
@@ -27,6 +40,10 @@ All notable changes to the Google Keep <=> Obsidian sync project will be documen
   - H1 headers are now ALWAYS preserved in content (no longer extracted as title)
   - Smart filename-to-title logic with special handling for "Untitled_[ID]" pattern files
   - Consistent title handling between PULL and PUSH operations
+
+- **Pull Behavior for Empty Notes (Bug Fix)**:
+  - Empty remote notes are now only skipped when they are new and active (not trashed/archived) with no existing local file
+  - If an empty remote note already exists locally or is trashed/archived, it is processed so that state changes and content clearing are propagated and files are moved to the correct local folder
 
 
 
