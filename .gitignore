@@ -18,9 +18,11 @@ logs_console.txt
 *.txt
 vault_backups/
 .venv/
+venv/
 .cursor/
 .obsidian/
 
 # Backup files and state
 backups/
 backup_state.json
+lipu-lawa-tu/
