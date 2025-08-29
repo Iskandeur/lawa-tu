@@ -1,0 +1,256 @@
+{
+  "items": [
+    {
+      "type": "graph",
+      "ctime": 1749135919513,
+      "title": "bien écarté, archiving status",
+      "options": {
+        "collapse-filter": false,
+        "search": "[trashed: false]",
+        "showTags": false,
+        "showAttachments": false,
+        "hideUnresolved": false,
+        "showOrphans": true,
+        "collapse-color-groups": false,
+        "colorGroups": [
+          {
+            "query": "[archived:false]",
+            "color": {
+              "a": 1,
+              "rgb": 14701138
+            }
+          },
+          {
+            "query": "[archived:tr]",
+            "color": {
+              "a": 1,
+              "rgb": 5431380
+            }
+          }
+        ],
+        "collapse-display": false,
+        "showArrow": false,
+        "textFadeMultiplier": 0,
+        "nodeSizeMultiplier": 0.7125,
+        "lineSizeMultiplier": 1,
+        "collapse-forces": false,
+        "centerStrength": 0.567708333333333,
+        "repelStrength": 17.2916666666667,
+        "linkStrength": 1,
+        "linkDistance": 30,
+        "scale": 0.0877914951989024,
+        "close": false
+      }
+    },
+    {
+      "type": "graph",
+      "ctime": 1753858138838,
+      "title": "notes to sort",
+      "options": {
+        "collapse-filter": false,
+        "search": "[trashed: false][archived:false]",
+        "showTags": false,
+        "showAttachments": false,
+        "hideUnresolved": false,
+        "showOrphans": true,
+        "collapse-color-groups": false,
+        "colorGroups": [
+          {
+            "query": "[archived:false]",
+            "color": {
+              "a": 1,
+              "rgb": 14701138
+            }
+          }
+        ],
+        "collapse-display": false,
+        "showArrow": false,
+        "textFadeMultiplier": 0,
+        "nodeSizeMultiplier": 0.7125,
+        "lineSizeMultiplier": 1,
+        "collapse-forces": false,
+        "centerStrength": 0.567708333333333,
+        "repelStrength": 17.2916666666667,
+        "linkStrength": 1,
+        "linkDistance": 30,
+        "scale": 0.1316872427983536,
+        "close": false
+      }
+    },
+    {
+      "type": "graph",
+      "ctime": 1753954220479,
+      "title": "notes to sort 2",
+      "options": {
+        "collapse-filter": false,
+        "search": "[pinned: false][trashed: false][archived:false]",
+        "showTags": false,
+        "showAttachments": false,
+        "hideUnresolved": false,
+        "showOrphans": true,
+        "collapse-color-groups": false,
+        "colorGroups": [
+          {
+            "query": "[archived:false]",
+            "color": {
+              "a": 1,
+              "rgb": 14701138
+            }
+          }
+        ],
+        "collapse-display": false,
+        "showArrow": false,
+        "textFadeMultiplier": 0,
+        "nodeSizeMultiplier": 0.7125,
+        "lineSizeMultiplier": 1,
+        "collapse-forces": false,
+        "centerStrength": 0.567708333333333,
+        "repelStrength": 17.2916666666667,
+        "linkStrength": 1,
+        "linkDistance": 30,
+        "scale": 0.1316872427983536,
+        "close": false
+      }
+    },
+    {
+      "type": "graph",
+      "ctime": 1754924984658,
+      "title": "notes to sort 3",
+      "options": {
+        "collapse-filter": false,
+        "search": "[pinned: false][trashed: false][archived:false]",
+        "showTags": false,
+        "showAttachments": false,
+        "hideUnresolved": false,
+        "showOrphans": true,
+        "collapse-color-groups": false,
+        "colorGroups": [
+          {
+            "query": "[archived:false]",
+            "color": {
+              "a": 1,
+              "rgb": 14701138
+            }
+          }
+        ],
+        "collapse-display": false,
+        "showArrow": false,
+        "textFadeMultiplier": -1.4,
+        "nodeSizeMultiplier": 0.7125,
+        "lineSizeMultiplier": 1,
+        "collapse-forces": false,
+        "centerStrength": 0.567708333333333,
+        "repelStrength": 17.2916666666667,
+        "linkStrength": 1,
+        "linkDistance": 30,
+        "scale": 0.29629629629629556,
+        "close": false
+      }
+    },
+    {
+      "type": "graph",
+      "ctime": 1755605630612,
+      "title": "Test graph",
+      "options": {
+        "collapse-filter": false,
+        "search": "[pinned: false][trashed: false][archived:false]",
+        "showTags": false,
+        "showAttachments": false,
+        "hideUnresolved": false,
+        "showOrphans": true,
+        "collapse-color-groups": false,
+        "colorGroups": [
+          {
+            "query": "[archived:false]",
+            "color": {
+              "a": 1,
+              "rgb": 14701138
+            }
+          }
+        ],
+        "collapse-display": false,
+        "showArrow": false,
+        "textFadeMultiplier": -1.4,
+        "nodeSizeMultiplier": 0.7125,
+        "lineSizeMultiplier": 1,
+        "collapse-forces": false,
+        "centerStrength": 0.567708333333333,
+        "repelStrength": 17.2916666666667,
+        "linkStrength": 1,
+        "linkDistance": 30,
+        "scale": 0.29629629629629556,
+        "close": true
+      }
+    },
+    {
+      "type": "graph",
+      "ctime": 1756492067861,
+      "title": "notes to sort - notion",
+      "options": {
+        "collapse-filter": false,
+        "search": "[pinned: false][trashed: false][archived:false]-tag:#NotionImport",
+        "showTags": true,
+        "showAttachments": false,
+        "hideUnresolved": false,
+        "showOrphans": true,
+        "collapse-color-groups": false,
+        "colorGroups": [
+          {
+            "query": "[archived:false]",
+            "color": {
+              "a": 1,
+              "rgb": 14701138
+            }
+          }
+        ],
+        "collapse-display": false,
+        "showArrow": false,
+        "textFadeMultiplier": -1.4,
+        "nodeSizeMultiplier": 0.7125,
+        "lineSizeMultiplier": 1,
+        "collapse-forces": false,
+        "centerStrength": 0.567708333333333,
+        "repelStrength": 17.2916666666667,
+        "linkStrength": 1,
+        "linkDistance": 30,
+        "scale": 0.07192406805528169,
+        "close": false
+      }
+    },
+    {
+      "type": "graph",
+      "ctime": 1756492744981,
+      "title": "-notion",
+      "options": {
+        "collapse-filter": false,
+        "search": "-tag:#NotionImport",
+        "showTags": false,
+        "showAttachments": false,
+        "hideUnresolved": false,
+        "showOrphans": true,
+        "collapse-color-groups": false,
+        "colorGroups": [
+          {
+            "query": "[archived:false]",
+            "color": {
+              "a": 1,
+              "rgb": 14701138
+            }
+          }
+        ],
+        "collapse-display": false,
+        "showArrow": false,
+        "textFadeMultiplier": -1.4,
+        "nodeSizeMultiplier": 0.7125,
+        "lineSizeMultiplier": 1,
+        "collapse-forces": false,
+        "centerStrength": 0.567708333333333,
+        "repelStrength": 17.2916666666667,
+        "linkStrength": 1,
+        "linkDistance": 30,
+        "scale": 0.19553868143310488,
+        "close": false
+      }
+    }
+  ]
+}

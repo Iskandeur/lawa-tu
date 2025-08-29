@@ -1,0 +1,20 @@
+{
+  "obsidian-shellcommands:shell-command-onn2o3568o": [
+    {
+      "modifiers": [
+        "Mod",
+        "Shift"
+      ],
+      "key": "S"
+    }
+  ],
+  "obsidian-custom-frames:open-custom-frames-google-calendar": [
+    {
+      "modifiers": [
+        "Mod",
+        "Shift"
+      ],
+      "key": "C"
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+# Environment variables
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+
+# State cache file from script
+.*_keep_state.json 
+
+keep_state.json
+keep_notes.json
+# Track Obsidian config while ignoring other KeepVault contents by default
+/KeepVault/*
+!/KeepVault/.obsidian/
+!/KeepVault/.obsidian/**
+# Ignore volatile/workspace-specific Obsidian files
+/KeepVault/.obsidian/workspace.json
+/KeepVault/.obsidian/workspace-mobile.json
+/KeepVault/.obsidian/graph.json
+/KeepVault/.obsidian/globalCache/
+/KeepVault/.obsidian/**/.cache/
+# Optional: plugin caches/logs (keep settings/manifests)
+/KeepVault/.obsidian/plugins/**/cache.json
+/KeepVault/.obsidian/plugins/**/logs/
+# Sensitive Obsidian data (exclude from repo)
+# The following are intentionally tracked for this project. Commented out per README rationale.
+# /KeepVault/.obsidian/bookmarks.json
+# /KeepVault/.obsidian/plugins/obsidian-shellcommands/data.json
+# /KeepVault/.obsidian/plugins/obsidian-custom-frames/data.json
+debug_sync.log
+logs_console.txt
+*.zip
+*.log
+*.txt
+vault_backups/
+.venv/
+venv/
+.cursor/
+/.obsidian/
+
+# Backup files and state
+backups/
+backup_state.json
+lipu-lawa-tu/
+tools/vault_export.md
+tools/vault_export.json
+
+venv/

@@ -1,0 +1,13 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+# Script Roles
+
+This project uses two main Python scripts for synchronization:
+
+*   **[pull.py](mdc:pull.py):** This script handles downloading notes and attachments from Google Keep to the local Obsidian vault. It converts notes to Markdown, manages timestamps, handles archived/trashed states by moving files, and cleans up orphaned local files.
+*   **[push.py](mdc:push.py):** This script handles uploading local changes from the Obsidian vault back to Google Keep. It reads Markdown files, parses frontmatter, compares local data with Keep (using timestamps and content diffing), updates existing notes, creates new notes, and handles status changes (archived/trashed).
+
+See the main [README.md](mdc:README.md) for detailed features of each script.
