@@ -25,6 +25,14 @@ import json
 import re
 
 
+class DateTimeEncoder(json.JSONEncoder):
+    """Custom JSON encoder that handles datetime objects by converting them to ISO format strings."""
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        return super().default(obj)
+
+
 def parse_frontmatter(full_text: str) -> Tuple[str, Dict, str]:
     """Return (frontmatter_raw, frontmatter_dict, body)
 
@@ -269,7 +277,7 @@ def export_vault(vault_root: Path, output_path: Path) -> Tuple[int, Path]:
         })
 
     with output_path.open("w", encoding="utf-8") as out:
-        json.dump(data, out, ensure_ascii=False, indent=2)
+        json.dump(data, out, ensure_ascii=False, indent=2, cls=DateTimeEncoder)
 
     return len(files), output_path
 

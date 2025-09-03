@@ -28,9 +28,55 @@ from datetime import timedelta # Already has datetime
 # import json # Already present
 # os, logging, sys, argparse, etc. are already present
 import subprocess
+import signal
 from tools import backup_utils # Moved into tools package
 # Obsidian config sync removed - import removed
 
+# --- Timeout Handler for List Operations ---
+class ListOperationTimeout(Exception):
+    """Exception raised when list operations take too long"""
+    pass
+
+def timeout_handler(signum, frame):
+    """Signal handler for timeout"""
+    raise ListOperationTimeout("List operation timed out")
+
+def with_timeout(seconds, func, *args, **kwargs):
+    """Execute function with timeout"""
+    if os.name == 'nt':  # Windows doesn't support signal.alarm
+        import threading
+        result = [None]
+        exception = [None]
+        
+        def target():
+            try:
+                result[0] = func(*args, **kwargs)
+            except Exception as e:
+                exception[0] = e
+        
+        thread = threading.Thread(target=target)
+        thread.daemon = True
+        thread.start()
+        thread.join(seconds)
+        
+        if thread.is_alive():
+            # Thread is still running, operation timed out
+            raise ListOperationTimeout(f"Operation timed out after {seconds} seconds")
+        
+        if exception[0]:
+            raise exception[0]
+        
+        return result[0]
+    else:
+        # Unix-like systems can use signals
+        old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(seconds)
+        try:
+            result = func(*args, **kwargs)
+            signal.alarm(0)  # Cancel the alarm
+            return result
+        finally:
+            signal.signal(signal.SIGALRM, old_handler)
 
 # --- Logging Setup ---
 LOG_FILE = 'debug_sync.log'
@@ -1350,22 +1396,90 @@ def update_gnote_from_local_data(gnote, local_metadata, local_content_raw, keep_
 
         # Compare the generated MD from remote items with our `content_to_push`
         if current_remote_list_md != content_to_push:
-            logging.info(f"  PUSH_UPDATE ({note_id}): Updating list items.")
-            changes_made_to_gnote = True
-            # Clear existing items and add new ones.
-            # This is a simple clear and add. This will lose existing item IDs.
+            # Check if list updates are disabled due to gkeepapi bugs
+            if hasattr(keep_instance, '_skip_list_updates') and keep_instance._skip_list_updates:
+                logging.warning(f"  PUSH_UPDATE ({note_id}): List content differs but --skip-list-updates is enabled. Skipping list item changes.")
+                logging.info(f"  PUSH_UPDATE ({note_id}): Will only update title, labels, and other metadata.")
+            else:
+                logging.info(f"  PUSH_UPDATE ({note_id}): Updating list items.")
+                changes_made_to_gnote = True
+                # Clear existing items and add new ones.
+                # This is a simple clear and add. This will lose existing item IDs.
 
-            # The loop 'while len(gnote.items) > 0: gnote.items.pop(0)' can cause
-            # an infinite loop because .items is a property that returns a new sorted copy.
-            # To modify the list, we must get the underlying collection through ._items()
-            # and then clear it.
-            gnote._items().clear()
+                try:
+                    # Use timeout to prevent hanging on list operations
+                    def update_list_items():
+                        # The loop 'while len(gnote.items) > 0: gnote.items.pop(0)' can cause
+                        # an infinite loop because .items is a property that returns a new sorted copy.
+                        # To modify the list, we must get the underlying collection through ._items()
+                        # and then clear it.
+                        
+                        # Due to gkeepapi bugs (see https://github.com/kiwiz/gkeepapi/issues/176),
+                        # list operations can fail with misleading 503 errors. Use most conservative approach.
+                        
+                        # Always use the safest fallback method: delete items one by one
+                        logging.debug(f"    PUSH_UPDATE ({note_id}): Using safe item-by-item deletion to avoid gkeepapi bugs")
+                        items_to_delete = list(gnote.items)  # Create a copy to avoid iteration issues
+                        
+                        deleted_count = 0
+                        for item in items_to_delete:
+                            try:
+                                item.delete()
+                                deleted_count += 1
+                            except Exception as e_del_item:
+                                logging.warning(f"    PUSH_UPDATE ({note_id}): Error deleting item '{item.text[:20] if item.text else 'EMPTY'}...': {e_del_item}")
+                        
+                        logging.debug(f"    PUSH_UPDATE ({note_id}): Deleted {deleted_count}/{len(items_to_delete)} existing items")
 
-            # Add items from local_list_items_parsed
-            for local_item_data in local_list_items_parsed:
-                # This creates new items, new IDs.
-                gnote.add(local_item_data['text'], local_item_data['checked'])
-            logging.debug(f"    PUSH_UPDATE ({note_id}): Cleared and re-added {len(local_list_items_parsed)} list items.")
+                    # Add items from local_list_items_parsed
+                    # Use conservative approach due to gkeepapi bugs
+                    items_added = 0
+                    for local_item_data in local_list_items_parsed:
+                        try:
+                            # Sanitize item text to avoid gkeepapi serialization issues
+                            item_text = local_item_data['text'].strip()
+                            if not item_text:  # Skip empty items
+                                continue
+                                
+                            # Limit item text length to avoid serialization issues
+                            if len(item_text) > 8000:  # Google Keep has limits
+                                item_text = item_text[:8000] + "..."
+                                logging.warning(f"    PUSH_UPDATE ({note_id}): Truncated long item text to 8000 chars")
+                            
+                            # This creates new items, new IDs.
+                            gnote.add(item_text, local_item_data['checked'])
+                            items_added += 1
+                            
+                            # Safety check to prevent infinite loops (but allow large legitimate lists)
+                            if items_added > 5000:  # Increased limit for large lists
+                                logging.error(f"    PUSH_UPDATE ({note_id}): Safety limit reached - stopping at {items_added} items to prevent infinite loop")
+                                break
+                            
+                            # Progress logging for large lists
+                            if items_added % 100 == 0:
+                                logging.debug(f"    PUSH_UPDATE ({note_id}): Added {items_added} items so far...")
+                                
+                        except Exception as e_add_item:
+                            logging.error(f"    PUSH_UPDATE ({note_id}): Error adding item '{local_item_data['text'][:20] if local_item_data.get('text') else 'EMPTY'}...': {e_add_item}")
+                            # Continue with next item instead of failing completely
+                            continue
+                    
+                        return items_added
+
+                    # Execute list update with shorter timeout to catch gkeepapi bugs faster
+                    try:
+                        items_added = with_timeout(15, update_list_items)  # Reduced from 30 to 15 seconds
+                        logging.debug(f"    PUSH_UPDATE ({note_id}): Successfully cleared and re-added {items_added}/{len(local_list_items_parsed)} list items.")
+                    except ListOperationTimeout:
+                        logging.error(f"    PUSH_UPDATE ({note_id}): List update operation timed out after 15 seconds - likely gkeepapi bug (see https://github.com/kiwiz/gkeepapi/issues/176)")
+                        logging.error(f"    PUSH_UPDATE ({note_id}): Skipping list update for this note to avoid hanging")
+                        logging.warning(f"    PUSH_UPDATE ({note_id}): Consider running sync with --skip-list-updates flag to avoid this issue")
+                        # Don't set changes_made_to_gnote to False here - other changes might still be valid
+                    
+                except Exception as e_list_update:
+                    logging.error(f"    PUSH_UPDATE ({note_id}): Critical error during list items update: {e_list_update}", exc_info=DEBUG)
+                    logging.error(f"    PUSH_UPDATE ({note_id}): Skipping list items update for this note to prevent hanging")
+                    # Don't set changes_made_to_gnote to False here - other changes might still be valid
         else:
             logging.debug(f"  PUSH_UPDATE ({note_id}): List items content matches. No direct list item update needed via clear/add.")
 
@@ -1472,6 +1586,7 @@ def create_gnote_from_local_data(keep_instance, local_metadata, local_content_ra
         logging.debug(f"  PUSH_CREATE ({note_id_for_log}): Detected list content. Creating List.")
         created_gnote = keep_instance.createList(title_for_new_note)
         # Parse content_for_new_note and add items to created_gnote.items
+        items_added = 0
         for line in content_for_new_note.split('\n'):
             line = line.strip()
             match = re.match(r'-\s*\[(x| )\]\s*(.*)', line, re.IGNORECASE)
@@ -1479,7 +1594,25 @@ def create_gnote_from_local_data(keep_instance, local_metadata, local_content_ra
                 item_text = match.group(2).strip()
                 is_checked = match.group(1).lower() == 'x'
                 if item_text: # Only add if there's text
-                    created_gnote.add(item_text, is_checked, gkeepapi.node.NewListItemPlacementValue.Bottom)
+                    try:
+                        created_gnote.add(item_text, is_checked, gkeepapi.node.NewListItemPlacementValue.Bottom)
+                        items_added += 1
+                        
+                        # Safety check to prevent infinite loops (but allow large legitimate lists)
+                        if items_added > 5000:  # Increased limit for large lists
+                            logging.error(f"  PUSH_CREATE ({note_id_for_log}): Safety limit reached - stopping at {items_added} items to prevent infinite loop")
+                            break
+                        
+                        # Progress logging for large lists
+                        if items_added % 100 == 0:
+                            logging.debug(f"  PUSH_CREATE ({note_id_for_log}): Added {items_added} items so far...")
+                            
+                    except Exception as e_add_new_item:
+                        logging.error(f"  PUSH_CREATE ({note_id_for_log}): Error adding item '{item_text[:20]}...': {e_add_new_item}")
+                        # Continue with next item instead of failing completely
+                        continue
+        
+        logging.debug(f"  PUSH_CREATE ({note_id_for_log}): Successfully added {items_added} items to new list.")
     else:
         logging.debug(f"  PUSH_CREATE ({note_id_for_log}): Creating Note with title '{title_for_new_note}'.")
         created_gnote = keep_instance.createNote(title_for_new_note, content_for_new_note)
@@ -1513,6 +1646,13 @@ def create_gnote_from_local_data(keep_instance, local_metadata, local_content_ra
 def run_push(keep, args, counters):
     """Scans local Markdown files, compares with Keep, and pushes changes."""
     logging.info("--- Starting PUSH Operation ---")
+    
+    # Set flag for skipping list updates if requested
+    if args.skip_list_updates:
+        keep._skip_list_updates = True
+        logging.warning("PUSH: --skip-list-updates enabled. List item changes will be skipped to avoid gkeepapi bugs.")
+    else:
+        keep._skip_list_updates = False
     
     # Index local files for push operation
     local_files_map = index_local_files_for_push(VAULT_DIR) # {filepath: {metadata:dict, content:str}}
@@ -2089,6 +2229,7 @@ def main():
     push_group = parser.add_argument_group('Push Options')
     push_group.add_argument("--force-push", action="store_true", help="PUSH: Force push local changes, potentially overwriting newer remote notes (unless cherry-pick).")
     push_group.add_argument("--cherry-pick", dest="cherry_pick", action="store_true", help="PUSH: For notes with differences, prompt user to choose between local and remote versions.")
+    push_group.add_argument("--skip-list-updates", action="store_true", help="PUSH: Skip updating list items to avoid gkeepapi bugs (only sync title, labels, etc.)")
     
     # Combined operation args
     parser.add_argument("--skip-pull", action="store_true", help="Skip the PULL operation.")
