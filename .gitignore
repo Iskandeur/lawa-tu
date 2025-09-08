@@ -47,3 +47,6 @@ tools/vault_export.md
 tools/vault_export.json
 
 venv/
+
+mcp-obsidian/
+WMCP/

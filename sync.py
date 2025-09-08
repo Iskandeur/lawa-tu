@@ -1004,27 +1004,70 @@ def run_pull(keep, args, counters):
                             counters['pull_errors'] += 1
             
             else: # Note is new locally
-                logging.info(f"  PULL: Keep ID {current_keep_id} not found locally. Creating new file...")
-                final_target_filepath_new = target_filepath_ideal
-                new_file_counter = 1
-                while os.path.exists(final_target_filepath_new): # Collision check for new file
-                    logging.warning(f"    PULL: Target path {os.path.relpath(final_target_filepath_new)} exists for new note. Appending counter.")
-                    name_part, ext_part = os.path.splitext(target_filename)
-                    final_target_filepath_new = os.path.join(target_dir, f"{name_part}_{new_file_counter}{ext_part}")
-                    new_file_counter += 1
-                    if new_file_counter > 20: # Safety break
-                        logging.error(f"    PULL: Could not find unique name for new note {current_keep_id}. Skipping creation.")
-                        final_target_filepath_new = None; break
+                logging.info(f"  PULL: Keep ID {current_keep_id} not found locally. Checking for existing local file with same title...")
                 
-                if final_target_filepath_new:
+                # Check if there's a local file with the same title but no Keep ID
+                existing_local_file = None
+                for existing_id, existing_info in local_notes_index.items():
+                    existing_metadata = existing_info.get('metadata', {})
+                    existing_title = existing_metadata.get('title', '')
+                    # Check if this local file has no Keep ID
+                    if not existing_metadata.get('id'):
+                        # Get filename without extension for comparison
+                        existing_filename = os.path.splitext(os.path.basename(existing_info['path']))[0]
+                        
+                        # Check for exact title match first
+                        if existing_title == keep_title:
+                            existing_local_file = existing_info['path']
+                            logging.info(f"    PULL: Found existing local file '{os.path.relpath(existing_local_file)}' with exact title match but no Keep ID. Will update it instead of creating duplicate.")
+                            break
+                        # Check if Keep title is contained in local title or vice versa
+                        elif (keep_title.lower() in existing_title.lower() or 
+                              existing_title.lower() in keep_title.lower() or
+                              keep_title.lower() in existing_filename.lower() or
+                              existing_filename.lower() in keep_title.lower()):
+                            existing_local_file = existing_info['path']
+                            logging.info(f"    PULL: Found existing local file '{os.path.relpath(existing_local_file)}' with similar title (local: '{existing_title}', Keep: '{keep_title}') but no Keep ID. Will update it instead of creating duplicate.")
+                            break
+                
+                if existing_local_file:
+                    # Update the existing local file with the new Keep note data
                     try:
                         new_markdown = convert_note_to_markdown(note_obj, note_data_dict)
-                        with open(final_target_filepath_new, "w", encoding="utf-8") as f: f.write(new_markdown)
-                        counters['pull_created_local'] += 1
-                        logging.info(f"    PULL: Created new file: {os.path.relpath(final_target_filepath_new)}")
-                    except Exception as e_new_write:
-                        logging.error(f"    PULL: Error writing new file {final_target_filepath_new}: {e_new_write}", exc_info=DEBUG)
+                        with open(existing_local_file, "w", encoding="utf-8") as f: f.write(new_markdown)
+                        counters['pull_updated_local'] += 1
+                        logging.info(f"    PULL: Updated existing file with Keep ID: {os.path.relpath(existing_local_file)}")
+                        # Remove from local_notes_index to prevent it from being processed again
+                        for existing_id in list(local_notes_index.keys()):
+                            if local_notes_index[existing_id]['path'] == existing_local_file:
+                                del local_notes_index[existing_id]
+                                break
+                    except Exception as e_update_existing:
+                        logging.error(f"    PULL: Error updating existing file {existing_local_file}: {e_update_existing}", exc_info=DEBUG)
                         counters['pull_errors'] += 1
+                else:
+                    # No existing file with same title, create new file
+                    logging.info(f"    PULL: No existing local file with same title found. Creating new file...")
+                    final_target_filepath_new = target_filepath_ideal
+                    new_file_counter = 1
+                    while os.path.exists(final_target_filepath_new): # Collision check for new file
+                        logging.warning(f"    PULL: Target path {os.path.relpath(final_target_filepath_new)} exists for new note. Appending counter.")
+                        name_part, ext_part = os.path.splitext(target_filename)
+                        final_target_filepath_new = os.path.join(target_dir, f"{name_part}_{new_file_counter}{ext_part}")
+                        new_file_counter += 1
+                        if new_file_counter > 20: # Safety break
+                            logging.error(f"    PULL: Could not find unique name for new note {current_keep_id}. Skipping creation.")
+                            final_target_filepath_new = None; break
+                    
+                    if final_target_filepath_new:
+                        try:
+                            new_markdown = convert_note_to_markdown(note_obj, note_data_dict)
+                            with open(final_target_filepath_new, "w", encoding="utf-8") as f: f.write(new_markdown)
+                            counters['pull_created_local'] += 1
+                            logging.info(f"    PULL: Created new file: {os.path.relpath(final_target_filepath_new)}")
+                        except Exception as e_new_write:
+                            logging.error(f"    PULL: Error writing new file {final_target_filepath_new}: {e_new_write}", exc_info=DEBUG)
+                            counters['pull_errors'] += 1
 
         except Exception as e_proc_note:
             logging.error(f"  PULL: Unexpected error processing note {current_keep_id}: {e_proc_note}", exc_info=DEBUG)
@@ -1935,77 +1978,86 @@ def run_push(keep, args, counters):
                 keep.sync()
                 save_cached_state(keep) # Save state after successful sync
                 logging.info("PUSH: Sync after push complete.")
-
-                # Update local files that were newly created with their new Keep IDs and timestamps
-                for action in actions_to_perform:
-                    if action['type'] == 'create' and 'created_gnote_object' in action:
-                        created_gnote = action['created_gnote_object']
-                        original_filepath = action['filepath']
-                        original_local_meta = action['local_metadata'] # Before creation
-                        original_local_content = action['local_content_raw'] # Before creation
-
-                        if created_gnote.id: # Check if ID was populated by sync
-                            logging.info(f"  PUSH: Updating local file {os.path.relpath(original_filepath)} with new Keep ID: {created_gnote.id}")
-                            try:
-                                # Create new metadata with ID and fresh timestamps from created_gnote
-                                updated_yaml_metadata = original_local_meta.copy() # Start with original
-                                updated_yaml_metadata['id'] = created_gnote.id
-                                updated_yaml_metadata['title'] = created_gnote.title # Use title from Keep
-                                if created_gnote.timestamps.created:
-                                    dt_utc_created = created_gnote.timestamps.created
-                                    if LOCAL_TZ:
-                                        updated_yaml_metadata['created'] = dt_utc_created.astimezone(LOCAL_TZ).isoformat()
-                                    else:
-                                        updated_yaml_metadata['created'] = dt_utc_created.isoformat().replace('+00:00', 'Z')
-                                if created_gnote.timestamps.updated:
-                                    dt_utc_updated = created_gnote.timestamps.updated
-                                    if LOCAL_TZ:
-                                        updated_yaml_metadata['updated'] = dt_utc_updated.astimezone(LOCAL_TZ).isoformat()
-                                    else:
-                                        updated_yaml_metadata['updated'] = dt_utc_updated.isoformat().replace('+00:00', 'Z')
-                                
-                                updated_yaml_metadata.pop('updated_dt', None) # Remove parsed dt object
-
-                                # Ensure color in frontmatter reflects actual created note (Keep might default color)
-                                updated_yaml_metadata['color'] = created_gnote.color.name.upper()
-                                # Ensure labels are from the created note
-                                if created_gnote.labels.all():
-                                    updated_yaml_metadata['tags'] = sorted([lbl.name.replace(' ', '_') for lbl in created_gnote.labels.all()])
-                                else:
-                                    updated_yaml_metadata.pop('tags', None)
-
-                                # Ensure archived and trashed status are added to frontmatter for consistency with PULL
-                                updated_yaml_metadata['archived'] = created_gnote.archived
-                                updated_yaml_metadata['trashed'] = created_gnote.trashed
-                                updated_yaml_metadata['pinned'] = created_gnote.pinned
-
-                                new_yaml_string = yaml.dump(updated_yaml_metadata, allow_unicode=True, default_flow_style=False, sort_keys=False)
-                                
-                                # The original_local_content might have had H1 removed if it became the title.
-                                # We need to ensure the content written back is correct.
-                                # The `content_for_new_note` used in `create_gnote_from_local_data` is the correct body.
-                                # Let's re-fetch that logic or pass it through.
-                                # Simplification: use original_local_content, assuming H1 handling was for `create_gnote`'s parameters only.
-                                # A more robust way: `created_gnote.text` or parsed list items, then re-MD-ify.
-                                # For now, write back the *original* content body.
-                                new_file_content = f"---\n{new_yaml_string.strip()}\n---\n{original_local_content}"
-
-                                with open(original_filepath, 'w', encoding='utf-8') as f_update_local:
-                                    f_update_local.write(new_file_content)
-                                logging.debug(f"    Successfully updated frontmatter in {original_filepath} with ID {created_gnote.id}")
-                            except Exception as e_update_local_id:
-                                logging.error(f"    Error updating local file {original_filepath} with new ID {created_gnote.id}: {e_update_local_id}", exc_info=DEBUG)
-                                counters['push_errors_local_id_update'] +=1
-                        else:
-                            logging.error(f"  PUSH: Failed to get ID for newly created note from {os.path.relpath(original_filepath)} after sync. Local file not updated with ID.")
-                            counters['push_errors_local_id_update'] +=1
             except gkeepapi.exception.SyncException as e_sync_final:
                 logging.error(f"PUSH: Error during final sync after push: {e_sync_final}", exc_info=DEBUG)
                 counters['push_errors_final_sync'] += 1
             except Exception as e_final_push_logic:
                 logging.error(f"PUSH: Unexpected error after push operations or during final sync: {e_final_push_logic}", exc_info=DEBUG)
                 counters['push_errors_final_sync'] += 1 # Group under sync errors
-        elif not counters['push_errors_apply'] > 0 and total_to_push > 0 :
+
+        # --- 5. Update local files with frontmatter (regardless of sync success) ---
+        # This should happen even if sync failed, as the notes were created successfully
+        for action in actions_to_perform:
+            if action['type'] == 'create' and 'created_gnote_object' in action:
+                created_gnote = action['created_gnote_object']
+                original_filepath = action['filepath']
+                original_local_meta = action['local_metadata'] # Before creation
+                original_local_content = action['local_content_raw'] # Before creation
+
+                if created_gnote.id: # Check if ID was populated by sync
+                    logging.info(f"  PUSH: Updating local file {os.path.relpath(original_filepath)} with new Keep ID: {created_gnote.id}")
+                    try:
+                        # Create new metadata with ID and fresh timestamps from created_gnote
+                        # Ensure we have a proper metadata structure even for files that started without frontmatter
+                        updated_yaml_metadata = original_local_meta.copy() if original_local_meta else {}
+                        updated_yaml_metadata['id'] = created_gnote.id
+                        updated_yaml_metadata['title'] = created_gnote.title # Use title from Keep
+                        if created_gnote.timestamps.created:
+                            dt_utc_created = created_gnote.timestamps.created
+                            if LOCAL_TZ:
+                                updated_yaml_metadata['created'] = dt_utc_created.astimezone(LOCAL_TZ).isoformat()
+                            else:
+                                updated_yaml_metadata['created'] = dt_utc_created.isoformat().replace('+00:00', 'Z')
+                        if created_gnote.timestamps.updated:
+                            dt_utc_updated = created_gnote.timestamps.updated
+                            if LOCAL_TZ:
+                                updated_yaml_metadata['updated'] = dt_utc_updated.astimezone(LOCAL_TZ).isoformat()
+                            else:
+                                updated_yaml_metadata['updated'] = dt_utc_updated.isoformat().replace('+00:00', 'Z')
+                        
+                        updated_yaml_metadata.pop('updated_dt', None) # Remove parsed dt object
+
+                        # Ensure color in frontmatter reflects actual created note (Keep might default color)
+                        updated_yaml_metadata['color'] = created_gnote.color.name.upper()
+                        # Ensure labels are from the created note
+                        if created_gnote.labels.all():
+                            updated_yaml_metadata['tags'] = sorted([lbl.name.replace(' ', '_') for lbl in created_gnote.labels.all()])
+                        else:
+                            updated_yaml_metadata.pop('tags', None)
+
+                        # Ensure archived and trashed status are added to frontmatter for consistency with PULL
+                        updated_yaml_metadata['archived'] = created_gnote.archived
+                        updated_yaml_metadata['trashed'] = created_gnote.trashed
+                        updated_yaml_metadata['pinned'] = created_gnote.pinned
+
+                        new_yaml_string = yaml.dump(updated_yaml_metadata, allow_unicode=True, default_flow_style=False, sort_keys=False)
+                        
+                        # Use the processed content that was actually sent to Google Keep
+                        # This ensures H1 headers and other processing is consistent
+                        processed_content = created_gnote.text if hasattr(created_gnote, 'text') else original_local_content
+                        
+                        # For list notes, we need to reconstruct the markdown from the list items
+                        if hasattr(created_gnote, 'items') and created_gnote.items:
+                            list_items = []
+                            for item in created_gnote.items:
+                                checkbox = "- [x]" if item.checked else "- [ ]"
+                                list_items.append(f"{checkbox} {item.text}")
+                            processed_content = '\n'.join(list_items)
+                        
+                        new_file_content = f"---\n{new_yaml_string.strip()}\n---\n{processed_content}"
+
+                        with open(original_filepath, 'w', encoding='utf-8') as f_update_local:
+                            f_update_local.write(new_file_content)
+                        logging.debug(f"    Successfully updated frontmatter in {original_filepath} with ID {created_gnote.id}")
+                    except Exception as e_update_local_id:
+                        logging.error(f"    Error updating local file {original_filepath} with new ID {created_gnote.id}: {e_update_local_id}", exc_info=DEBUG)
+                        counters['push_errors_local_id_update'] +=1
+                else:
+                    logging.error(f"  PUSH: Failed to get ID for newly created note from {os.path.relpath(original_filepath)} after sync. Local file not updated with ID.")
+                    counters['push_errors_local_id_update'] +=1
+        
+        # Additional logging for edge cases
+        if not counters['push_errors_apply'] > 0 and total_to_push > 0:
              logging.info("PUSH: Changes were made to Keep, but final sync was skipped as 'sync_needed_after_push' was false (should not happen if changes occurred).")
         elif not sync_needed_after_push and not counters['push_errors_apply'] > 0: # No changes made that required a sync
              logging.info("PUSH: No remote changes made that required a final sync.")
@@ -2382,6 +2434,9 @@ def main():
             backup_needed_by_count = (sync_count >= BACKUP_SYNC_COUNT_TRIGGER * 2)  # Double the threshold for auto-sync
             logging.info(f"Automatic sync mode: Using higher sync count threshold ({BACKUP_SYNC_COUNT_TRIGGER * 2}) for backups")
 
+        # Ensure current_time is aware (it is, as sync_start_time is aware UTC)
+        current_time_utc = sync_start_time # sync_start_time is already defined as datetime.now(timezone.utc)
+
         try:
             last_backup_time_dt = datetime.fromisoformat(last_backup_time_str)
             # If naive, try to localize it to UTC if LOCAL_TZ is not available, or make it aware based on LOCAL_TZ then convert to UTC
@@ -2394,9 +2449,6 @@ def main():
                     last_backup_time_dt = last_backup_time_dt.replace(tzinfo=timezone.utc)
             else: # Already aware, ensure it's UTC
                  last_backup_time_dt = last_backup_time_dt.astimezone(timezone.utc)
-
-            # Ensure current_time is aware (it is, as sync_start_time is aware UTC)
-            current_time_utc = sync_start_time # sync_start_time is already defined as datetime.now(timezone.utc)
             
             # Handle datetime.min.isoformat() which results in a naive datetime.min
             # datetime.min.replace(tzinfo=timezone.utc) is the correct comparison target

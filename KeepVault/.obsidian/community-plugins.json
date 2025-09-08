@@ -6,5 +6,6 @@
   "graph-banner",
   "extended-graph",
   "sync-graph-settings",
-  "obsidian-linter"
+  "obsidian-linter",
+  "obsidian-local-rest-api"
 ]
